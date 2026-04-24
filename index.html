@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Roller — Balance Bot Sim</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; font: 13px/1.4 system-ui, sans-serif; background:#111; color:#ddd; display:grid; grid-template-columns: 1fr 320px; gap: 12px; padding: 12px; }
+  h2 { margin: 0 0 6px; font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color:#8ab; }
+  canvas { background:#0a0a0a; border:1px solid #222; display:block; width:100%; }
+  .panel { background:#181818; border:1px solid #222; border-radius:6px; padding:10px; margin-bottom:10px; }
+  details.panel > summary { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color:#8ab; cursor:pointer; list-style:none; user-select:none; }
+  details.panel > summary::-webkit-details-marker { display:none; }
+  details.panel > summary::before { content:'▸ '; color:#555; }
+  details.panel[open] > summary { margin-bottom: 6px; }
+  details.panel[open] > summary::before { content:'▾ '; color:#555; }
+  label { display:grid; grid-template-columns: 1fr 60px; gap:6px; align-items:center; margin:4px 0; font-variant-numeric: tabular-nums; }
+  input[type=range] { width: 100%; }
+  input[type=number] { width: 60px; background:#222; color:#ddd; border:1px solid #333; padding:2px 4px; }
+  button { background:#2a4; color:#fff; border:0; padding:6px 10px; border-radius:4px; cursor:pointer; margin-right:4px; }
+  button.alt { background:#444; }
+  button.warn { background:#a42; }
+  .row { display:flex; gap:4px; flex-wrap:wrap; }
+  .stat { font-variant-numeric: tabular-nums; color:#8ab; }
+  #log { max-height: 140px; overflow:auto; font:11px ui-monospace,monospace; background:#000; padding:6px; border:1px solid #222; }
+</style>
+</head>
+<body>
+
+<div>
+  <canvas id="world" width="900" height="420"></canvas>
+  <div style="margin-top:8px; display:flex; gap:10px; align-items:center; font-size:12px">
+    <span style="color:#666">Plot:</span>
+    <select id="plot1"></select>
+    <select id="plot2"></select>
+    <select id="plot3"></select>
+  </div>
+  <canvas id="plot" width="900" height="220" style="margin-top:6px"></canvas>
+
+  <details class="panel" style="margin-top:10px" open>
+    <summary>Neural net distillation</summary>
+    <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:12px; margin-top:8px">
+      <div>
+        <div style="color:#888; font-size:11px; margin-bottom:4px">1. Record samples</div>
+        <div class="row">
+          <button id="btnRecord"   class="alt">Record</button>
+          <button id="btnClearRec" class="alt">Clear</button>
+          <button id="btnSaveRec"  class="alt">Save JSON</button>
+        </div>
+        <div class="stat" id="recStats" style="margin-top:6px">0 samples</div>
+      </div>
+      <div>
+        <div style="color:#888; font-size:11px; margin-bottom:4px">2. Train the net</div>
+        <label>Training mode
+          <select id="nnMode" style="grid-column: span 1">
+            <option value="random" selected>Random state queries</option>
+            <option value="recorded">Recorded trajectory</option>
+          </select>
+        </label>
+        <label>Hidden neurons   <input type="number" id="nnHidden" value="16"  step="1"  min="1" max="64"></label>
+        <label>Epochs           <input type="number" id="nnEpochs" value="300" step="25" min="10"></label>
+        <label>Samples / epoch  <input type="number" id="nnSamples" value="1000" step="100" min="100"></label>
+        <label>Learning rate    <input type="number" id="nnLR"     value="0.02" step="0.005"></label>
+        <div class="row" style="margin-top:4px"><button id="btnTrainNN" class="warn">Train</button></div>
+        <div class="stat" id="nnStats" style="margin-top:6px; font-family:ui-monospace">–</div>
+      </div>
+      <div>
+        <div style="color:#888; font-size:11px; margin-bottom:4px">3. Loss curve (log)</div>
+        <canvas id="lossPlot" width="260" height="120" style="width:100%; background:#0a0a0a; border:1px solid #222"></canvas>
+        <div style="color:#666; font-size:11px; margin-top:4px">
+          Then pick "Neural net (distilled)" in the controller dropdown.
+        </div>
+      </div>
+    </div>
+  </details>
+</div>
+
+<div>
+  <div class="panel">
+    <h2>Run</h2>
+    <div class="row">
+      <button id="btnRun">Start</button>
+      <button id="btnReset" class="alt">Reset</button>
+      <button id="btnPush" class="alt">Shove</button>
+      <button id="btnExp" class="warn">Sweep Kp</button>
+    </div>
+    <div class="stat" id="stats" style="margin-top:6px"></div>
+    <div style="margin-top:6px; color:#666; font-size:11px">
+      ←/→ lean · ↑/↓ shove (tip) · space pause · click world to set nav target
+    </div>
+    <label style="margin-top:6px">Shove strength (rad/s) <input type="number" id="shoveOmega" value="6" step="0.5"></label>
+  </div>
+
+  <details class="panel" open>
+    <summary>Navigation</summary>
+    <label>Enable <input type="checkbox" id="navEnabled"></label>
+    <label>Target x (m)  <input type="number" id="navTargetX" value="0" step="0.1"></label>
+    <label>Mode
+      <select id="navMode">
+        <option value="profile" selected>√ braking profile</option>
+        <option value="pd">PD (classic)</option>
+      </select>
+    </label>
+    <div data-navmode="pd">
+      <label>Kp (rad/m)    <input type="number" id="Kp_nav" value="0.15" step="0.01"></label>
+      <label>Kd (rad·s/m)  <input type="number" id="Kd_nav" value="0.3"  step="0.05"></label>
+    </div>
+    <div data-navmode="profile">
+      <label>v_max (m/s)        <input type="number" id="nav_v_max" value="3.0"  step="0.1"></label>
+      <label>a_max (m/s²)       <input type="number" id="nav_a_max" value="1.5"  step="0.1"></label>
+      <label>Kvel (rad·s/m)     <input type="number" id="nav_Kvel"  value="0.15" step="0.01"></label>
+      <label>Linear zone (m)    <input type="number" id="nav_linear_zone" value="0.05" step="0.01"></label>
+      <label>Lookahead (s)      <input type="number" id="nav_lookahead"   value="0.3"  step="0.05"></label>
+    </div>
+    <label>Tilt limit (rad)     <input type="number" id="nav_tiltLimit" value="0.25" step="0.01"></label>
+  </details>
+
+  <div class="panel">
+    <h2>Preset</h2>
+    <div class="row">
+      <button class="alt" data-preset="arduroller">ArduRoller</button>
+      <button class="alt" data-preset="testbot">Test bot</button>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Tunings</h2>
+    <div class="row">
+      <button id="btnSaveTuning" class="alt">Save…</button>
+      <button id="btnExportTuning" class="alt">Export</button>
+      <button id="btnImportTuning" class="alt">Import</button>
+      <input type="file" id="importFile" accept="application/json" style="display:none">
+    </div>
+    <div id="savedTunings" style="margin-top:6px; font-size:12px"></div>
+  </div>
+
+  <div class="panel">
+    <h2>Physics</h2>
+    <label>Wheel+frame mass M <input type="number" id="M" value="1.0" step="0.1"></label>
+    <label>Body mass m <input type="number" id="m" value="1.5" step="0.1"></label>
+    <label>CoM height L (m) <input type="number" id="L" value="0.5" step="0.05"></label>
+    <label>Wheel radius R (m) <input type="number" id="R" value="0.1" step="0.01"></label>
+    <label>Wheel inertia Iw <input type="number" id="Iw" value="0.02" step="0.001"></label>
+    <label>Rolling friction <input type="number" id="cx" value="0.3" step="0.05"></label>
+    <label>Pivot friction <input type="number" id="cp" value="0.005" step="0.005"></label>
+    <label>Initial angle° <input type="number" id="th0" value="4" step="1"></label>
+    <label>Noise (rad) <input type="number" id="noise" value="0" step="0.001"></label>
+  </div>
+
+  <div class="panel">
+    <h2>Controller</h2>
+    <label>Type
+      <select id="ctrlType" style="grid-column: span 1">
+        <option value="ardubalance" selected>ArduBalance (cascaded)</option>
+        <option value="pid">Idealized PID (force)</option>
+        <option value="nn">Neural net (distilled)</option>
+      </select>
+    </label>
+  </div>
+
+  <details class="panel" data-ctrl="pid" open>
+    <summary>PID gains (force out)</summary>
+    <label>Kp <input type="number" id="Kp" value="800" step="10"></label>
+    <label>Ki <input type="number" id="Ki" value="0" step="0.5"></label>
+    <label>Kd <input type="number" id="Kd" value="60" step="1"></label>
+    <label>Kx (cart pos) <input type="number" id="Kx" value="2" step="0.1"></label>
+    <label>Kv (cart vel) <input type="number" id="Kv" value="1" step="0.1"></label>
+    <label>Force limit (N) <input type="number" id="Fmax" value="60" step="1"></label>
+  </details>
+
+  <details class="panel" data-ctrl="ardubalance" open>
+    <summary>ArduBalance — outer loop</summary>
+    <label>bal_P  (m/s per rad)   <input type="number" id="bal_P" value="120" step="5"></label>
+    <label>bal_D  (m/s per rad/s) <input type="number" id="bal_D" value="1.0" step="0.1"></label>
+    <label>bal_I  (auto-trim)     <input type="number" id="bal_I" value="0" step="0.01"></label>
+    <label>p_vel  (speed fb)      <input type="number" id="p_vel" value="1.2" step="0.05"></label>
+  </details>
+
+  <details class="panel" data-ctrl="ardubalance">
+    <summary>ArduBalance — inner wheel PID</summary>
+    <label>wheel_P    <input type="number" id="wheel_P"    value="600" step="10"></label>
+    <label>wheel_I    <input type="number" id="wheel_I"    value="40"  step="1"></label>
+    <label>wheel_D    <input type="number" id="wheel_D"    value="5"   step="0.5"></label>
+    <label>FF PWM/mps <input type="number" id="ff_per_mps" value="250" step="10"></label>
+    <label>Dead zone  <input type="number" id="dead_zone"  value="0"   step="5"></label>
+  </details>
+
+  <details class="panel">
+    <summary>Sensors &amp; Timing</summary>
+    <label>Encoder ticks/rev  <input type="number" id="ticks_per_rev" value="815" step="1"></label>
+    <label>IMU pitch noise (rad)  <input type="number" id="imu_noise" value="0.002" step="0.0005"></label>
+    <label>Gyro noise (rad/s)     <input type="number" id="gyro_noise" value="0.01"  step="0.005"></label>
+    <label>Sensor rate (Hz) <input type="number" id="sensorHz" value="100" step="10"></label>
+    <label>Outer loop (Hz)  <input type="number" id="outerHz"  value="100" step="10"></label>
+    <label>Inner loop (Hz)  <input type="number" id="innerHz"  value="400" step="10"></label>
+  </details>
+
+  <details class="panel">
+    <summary>Motor</summary>
+    <label>Km (N per duty)    <input type="number" id="Km"       value="80"   step="5"></label>
+    <label>Kv (back-EMF N·s/m)<input type="number" id="Kv_motor" value="10"   step="0.5"></label>
+    <label>PWM max            <input type="number" id="PWM_max"  value="2000" step="100"></label>
+    <label>Deadband (PWM)     <input type="number" id="deadband" value="80"   step="5"></label>
+    <div class="row" style="margin-top:6px">
+      <button id="btnCalibrate" class="alt">Calibrate</button>
+      <button id="btnClearLUT"  class="alt">Clear LUT</button>
+    </div>
+    <canvas id="lutPreview" width="260" height="100" style="margin-top:6px; width:100%; background:#0a0a0a; border:1px solid #222"></canvas>
+  </details>
+
+  <div class="panel">
+    <h2>Log</h2>
+    <div id="log"></div>
+  </div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
+  }
+}
+</script>
+<script type="module" src="main.js"></script>
+</body>
+</html>
