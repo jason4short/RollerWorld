@@ -500,6 +500,18 @@ export class App {
 		setInterval(refreshRecStats, 250);
 
 		document.getElementById('btnTrainNN').onclick = () => this.trainNN();
+		document.getElementById('btnTrainPitchNN').onclick = () => this.trainAttitudePitchNN();
+		document.getElementById('pitch_arm_mode').onchange = e => {
+			const mode = e.target.value;
+			const mlp = this.attitudePitchMlp ?? null;
+			if (mode === 'nn' && !mlp) {
+				this.ui.log(this.tSim, 'no trained pitch NN yet — staying on rule');
+				e.target.value = 'rule';
+				return;
+			}
+			this.stack.attitude.setPitchArm(mode, mlp);
+			this.ui.log(this.tSim, `pitch arm: ${mode}`);
+		};
 
 		document.getElementById('btnCalibrate').onclick = () => this.calibrateMotor();
 		document.getElementById('btnClearLUT').onclick = () => {
@@ -745,6 +757,43 @@ export class App {
 		const finalLoss = lossHistory.at(-1);
 		nnStats.textContent = `done: loss=${finalLoss.toExponential(3)}	(${dt.toFixed(1)}s)`;
 		this.ui.log(this.tSim, `NN trained: final loss=${finalLoss.toExponential(3)} in ${dt.toFixed(1)}s`);
+	}
+
+	// Train a small MLP to imitate the rule-based pitch arm of Attitude.
+	// Reuses the NN-training UI's hidden-units / epochs / samples / LR
+	// fields so a student can vary network capacity and watch loss vs
+	// fidelity. On success, the trained MLP is auto-installed and the
+	// pitch-arm select flips to 'nn'.
+	async trainAttitudePitchNN() {
+		const hidden  = +document.getElementById('nnHidden').value;
+		const epochs  = Math.max(50, +document.getElementById('nnEpochs').value);
+		const samples = +document.getElementById('nnSamples').value;
+		const lr      = +document.getElementById('nnLR').value;
+		const stats   = document.getElementById('pitchNNStats');
+
+		const mlp = new MLP(3, hidden, 1);
+		const attGains = this.ui.readCascadeGains().attitude;
+		stats.textContent = `training: 0/${epochs}, ${samples} random/epoch, ${mlp.paramCount()} params`;
+		this.ui.log(this.tSim, `training pitch-arm NN (${hidden} hidden, ${mlp.paramCount()} params)`);
+
+		const lossHistory = [];
+		const t0 = performance.now();
+		await this.nnTrainer.trainAttitudePitch({
+			mlp, attGains, epochs, samplesPerEpoch: samples, lr, momentum: 0.9,
+			onProgress: (e, loss) => {
+				lossHistory.push(loss);
+				stats.textContent = `epoch ${e + 1}/${epochs}	loss=${loss.toExponential(3)}`;
+				this.drawLossPlot(lossHistory);
+			},
+		});
+		const dt = (performance.now() - t0) / 1000;
+
+		this.attitudePitchMlp = mlp;
+		this.stack.attitude.setPitchArm('nn', mlp);
+		document.getElementById('pitch_arm_mode').value = 'nn';
+		const finalLoss = lossHistory.at(-1);
+		stats.textContent = `done: loss=${finalLoss.toExponential(3)}	(${dt.toFixed(1)}s) — using NN`;
+		this.ui.log(this.tSim, `pitch-arm NN trained: final loss=${finalLoss.toExponential(3)} in ${dt.toFixed(1)}s, switched to NN`);
 	}
 
 	drawLossPlot(losses) {

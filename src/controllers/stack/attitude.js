@@ -24,6 +24,18 @@
 // (pilot snaps the stick, mixer recomputes), d(error)/dt has a derivative
 // kick that slams the actuator. d(measurement)/dt is the same signal in
 // steady state with no kick on setpoint changes. Free win.
+//
+// Pitch arm — rule vs NN
+// ----------------------
+// The pitch arm is the most interesting layer to teach with a neural net:
+// small input space (pitch, pitch_rate, pitch_target → force_fwd), high
+// nonlinearity in tuning, immediately visible behavior. Attitude can
+// swap its pitch arm between the hand-written PD and a trained MLP via
+// `setPitchArm('rule')` or `setPitchArm('nn', mlp)`. Yaw is unchanged —
+// it's a clean cascade and there's not much to learn there.
+
+const PITCH_ARM_INPUT_SCALES  = [1 / (Math.PI / 3), 1 / 10, 1 / (Math.PI / 6)];
+const PITCH_ARM_OUTPUT_SCALE  = 60;   // ±1 → ±60 N (matches typical force_max)
 
 export class Attitude {
 	constructor() {
@@ -31,7 +43,21 @@ export class Attitude {
 		this.lastForceFwd   = 0;   // diagnostics
 		this.lastTorqueYaw  = 0;
 		this.lastYawRateRef = 0;
+
+		// Pitch arm pluggability: 'rule' (PD + auto-trim) or 'nn' (MLP).
+		this.pitchArmMode = 'rule';
+		this.pitchArmMlp  = null;
 	}
+
+	setPitchArm(mode, mlp = null) {
+		this.pitchArmMode = mode;
+		this.pitchArmMlp  = mlp;
+	}
+
+	// Normalization shared with the trainer — the layer and the trainer
+	// must agree on input/output scaling or the network is meaningless.
+	static get PITCH_ARM_INPUT_SCALES()  { return PITCH_ARM_INPUT_SCALES; }
+	static get PITCH_ARM_OUTPUT_SCALE() { return PITCH_ARM_OUTPUT_SCALE; }
 
 	reset() {
 		this.balance_offset = 0;
@@ -52,11 +78,16 @@ export class Attitude {
 		return { force_fwd, torque_yaw };
 	}
 
-	// Pitch: PD on (measured_pitch + balance_offset − target), with the
-	// balance_offset slowly absorbing IMU bias when the bot is quiet.
 	_pitchArm(pitch_target, sensors, gains, dt) {
-		const { pitch_P, pitch_D, pitch_I, force_max } = gains;
+		if (this.pitchArmMode === 'nn' && this.pitchArmMlp) {
+			return this._pitchArmNN(pitch_target, sensors, gains);
+		}
+		return this._pitchArmRule(pitch_target, sensors, gains, dt);
+	}
 
+	// Pitch (rule): PD on (measured_pitch + balance_offset − target), with
+	// the balance_offset slowly absorbing IMU bias when the bot is quiet.
+	_pitchArmRule(pitch_target, sensors, gains, dt) {
 		const pitch_meas = sensors.pitch + this.balance_offset;
 		const pitch_err  = pitch_meas - pitch_target;
 
@@ -65,13 +96,47 @@ export class Attitude {
 		// pushes the bot over. Leak slowly so a stale offset can't survive.
 		const quiet = Math.abs(pitch_target) < 0.01
 		           && Math.abs(pitch_err)    < 0.04;   // ~2.3°
-		if (quiet) this.balance_offset += pitch_I * pitch_err * dt;
+		if (quiet) this.balance_offset += gains.pitch_I * pitch_err * dt;
 		this.balance_offset *= (1 - dt / 60);   // 60-s leak time constant
 
-		// PD: P on err, D on raw gyro (avoids derivative kick on target steps).
-		let force = pitch_P * pitch_err + pitch_D * sensors.pitch_rate;
+		// Delegate the PD math to a static helper so the NN trainer can
+		// query the exact same function as a teacher.
+		return Attitude.computePitchArmRule(
+			{ pitch: pitch_meas, pitch_rate: sensors.pitch_rate, pitch_target },
+			gains,
+		);
+	}
+
+	// Stateless pitch-arm math. The rule branch and the NN trainer both
+	// call this so they agree on the function being approximated.
+	// (pitch already includes balance_offset if you want it baked in.)
+	static computePitchArmRule({ pitch, pitch_rate, pitch_target }, gains) {
+		const { pitch_P, pitch_D, force_max } = gains;
+		const pitch_err = pitch - pitch_target;
+		let force = pitch_P * pitch_err + pitch_D * pitch_rate;
 		if (force >  force_max) force =  force_max;
 		if (force < -force_max) force = -force_max;
+		return force;
+	}
+
+	// Pitch (NN): three inputs (pitch, pitch_rate, pitch_target) → one
+	// output (force_fwd). The MLP is trained offline by NNTrainer to
+	// imitate the rule-based pitch arm at random states. No auto-trim
+	// here — it would require persistent state outside the network. If
+	// IMU bias matters, train with `balance_offset` baked into the
+	// teacher's pitch reading.
+	_pitchArmNN(pitch_target, sensors, gains) {
+		const inScale  = PITCH_ARM_INPUT_SCALES;
+		const x = [
+			sensors.pitch      * inScale[0],
+			sensors.pitch_rate * inScale[1],
+			pitch_target       * inScale[2],
+		];
+		const y = this.pitchArmMlp.forward(x);
+		let force = y[0] * PITCH_ARM_OUTPUT_SCALE;
+		const fmax = gains.force_max;
+		if (force >  fmax) force =  fmax;
+		if (force < -fmax) force = -fmax;
 		return force;
 	}
 

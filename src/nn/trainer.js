@@ -1,4 +1,5 @@
 import { ArduBalanceController } from '../controllers/ardubalance.js';
+import { Attitude } from '../controllers/stack/attitude.js';
 
 // Supervised-learning trainer.
 //
@@ -113,6 +114,58 @@ export class NNTrainer {
 			targets[n] = [data[n].output * this.outScale];
 		}
 		return { inputs, targets };
+	}
+
+	// ── Attitude pitch-arm distillation ───────────────────────────────────
+	// Tighter problem than whole-stack: 3 inputs, 1 output, no inner-loop
+	// state to imitate. The teacher is `Attitude.computePitchArmRule`, the
+	// stateless PD that the rule-based pitch arm delegates to. The MLP
+	// learns to approximate that function over the input envelope.
+	//
+	// Why this is a better-shaped NN problem than the legacy whole-stack:
+	//   - The function is genuinely a function (no hidden state).
+	//   - The input envelope is small (pitch ±60°, pitch_rate ±10, target ±30°).
+	//   - The output range is bounded (±force_max).
+	// The same data → loss → tuning intuitions transfer directly to harder
+	// learned-controller problems, but the failure modes are easy to see.
+
+	generateAttitudePitchBatch(n, attGains) {
+		const inScale  = Attitude.PITCH_ARM_INPUT_SCALES;
+		const outScale = 1 / Attitude.PITCH_ARM_OUTPUT_SCALE;
+		const r = (lo, hi) => lo + Math.random() * (hi - lo);
+
+		const inputs  = new Array(n);
+		const targets = new Array(n);
+		for (let i = 0; i < n; i++) {
+			const pitch        = r(-Math.PI / 3, Math.PI / 3);   // ±60°
+			const pitch_rate   = r(-10, 10);                     // ±10 rad/s
+			const pitch_target = r(-Math.PI / 6, Math.PI / 6);   // ±30°
+			const force = Attitude.computePitchArmRule(
+				{ pitch, pitch_rate, pitch_target }, attGains,
+			);
+			const row = new Float64Array(3);
+			row[0] = pitch        * inScale[0];
+			row[1] = pitch_rate   * inScale[1];
+			row[2] = pitch_target * inScale[2];
+			inputs[i]  = row;
+			targets[i] = [force * outScale];
+		}
+		return { inputs, targets };
+	}
+
+	async trainAttitudePitch({ mlp, attGains, epochs = 1000, samplesPerEpoch = 1000,
+	                           lr = 0.02, momentum = 0.9, onProgress }) {
+		const losses = [];
+		for (let e = 0; e < epochs; e++) {
+			const batch = this.generateAttitudePitchBatch(samplesPerEpoch, attGains);
+			const loss  = mlp.trainEpoch(batch.inputs, batch.targets, lr, momentum);
+			losses.push(loss);
+			if (onProgress && (e % 5 === 0 || e === epochs - 1)) {
+				onProgress(e, loss);
+				await new Promise(r => setTimeout(r, 0));
+			}
+		}
+		return losses;
 	}
 
 	// Train asynchronously — yields to the event loop so the UI can update.
