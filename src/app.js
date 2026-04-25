@@ -254,9 +254,12 @@ export class App {
 			}
 
 			
-			if (controller instanceof ArduBalanceController || controller instanceof NNController) {
-				//
+			if (controller instanceof ArduBalanceController) {
 				controller.target_angle = tiltSetpoint;
+			} else if (controller instanceof NNController) {
+				// NN swallows the velocity-tracking step; it takes vel_cart_target
+				// (post-slew) directly from nav rather than a tilt setpoint.
+				controller.vel_cart_target = this.nav.v_desired_last ?? 0;
 			}
 
 			const dtSensor = 1 / Math.max(1, rates.sensorHz);
@@ -299,7 +302,7 @@ export class App {
 					// regardless of which controller is driving. Lets us plot what
 					// the NN would say alongside what the active controller said.
 					if (this.controllers.nn.mlp && controller !== this.controllers.nn) {
-						this.controllers.nn.target_angle = tiltSetpoint;
+						this.controllers.nn.vel_cart_target = this.nav.v_desired_last ?? 0;
 						this.controllers.nn.produceForce(measInner, gains, dtInner, this.motor);
 					}
 
@@ -309,12 +312,11 @@ export class App {
 					// Ignore PID — we're distilling the cascaded controller specifically.
 					if (this.recorder.recording && controller instanceof ArduBalanceController) {
 						this.recorder.record({
-							pitch:        this.measured.pitch,
-							pitch_rate:   this.measured.pitch_rate,
-							x:            this.measured.x,
-							v:            this.measured.v,
-							target_angle: controller.target_angle,
-							pwm:          controller.lastPWM ?? 0,
+							pitch:           this.measured.pitch,
+							pitch_rate:      this.measured.pitch_rate,
+							vel_cart:        this.measured.v,
+							vel_cart_target: this.nav.v_desired_last ?? 0,
+							pwm:             controller.lastPWM ?? 0,
 						});
 					}
 				}
@@ -639,8 +641,9 @@ export class App {
 			return;
 		}
 
-		const mlp = new MLP(6, hidden, 1);
+		const mlp = new MLP(5, hidden, 1);
 		const gains = this.ui.readArduGains();
+		const navGains = this.ui.readNavGains();
 		const dtInner = 1 / Math.max(1, this.ui.readRates().innerHz);
 		const srcDesc = mode === 'random'
 			? `${samples} random samples/epoch`
@@ -655,6 +658,7 @@ export class App {
 			mode,
 			data: this.recorder.data,
 			gains,
+			navGains,
 			motor: this.motor,
 			dt: dtInner,
 			epochs,

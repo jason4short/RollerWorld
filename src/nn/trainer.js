@@ -2,56 +2,71 @@ import { ArduBalanceController } from '../controllers/ardubalance.js';
 
 // Supervised-learning trainer.
 //
+// The NN takes (pitch, pitch_rate, vel_cart, vel_cart_prev, vel_cart_target)
+// and outputs PWM. The teacher is the combined pipeline of nav's velocity-
+// tracking step and the full ArduBalance cascade:
+//
+//     tilt = clamp(Kvel * (vel_cart_target - vel_cart), ±tiltLimit)
+//     ab.target_angle = tilt
+//     pwm = ab.updateVelocity + ab.produceForce
+//
+// Crucially, we initialize ArduBalance's inner-loop D-term state from the
+// implied cart acceleration (vel_cart - vel_cart_prev)/dt so the NN sees
+// meaningful wheel-D damping in its training targets. Without this the
+// NN learns a controller with no linear damping and rocks on the wheel axis.
+//
 // Two modes:
-//   random — generate uniformly random input states and query the teacher
-//            (ArduBalance) for the "right" PWM. No recording needed. Covers
-//            the whole input envelope evenly, so the NN is robust to
-//            distribution shift when it takes control.
+//   random — generate uniformly random input states and query the teacher.
+//            No recording needed. Covers the whole input envelope evenly,
+//            so the NN is robust to distribution shift when it takes control.
 //   recorded — train on what the recorder captured (classic imitation
 //              learning; biased toward the teacher's steady-state trajectory).
-//
-// The random mode is what Jason's car project uses in Car.train(), and it
-// works better for the same reason: the NN that has to drive at inference
-// time visits states the teacher wouldn't have, and it needs to know what
-// to do there.
 
 export class NNTrainer {
 	constructor() {
 		// Input normalization — divide by expected max, bringing values to ±1.
-		//          pitch,         pitch_rate,  x,    v,     target_angle,        dv
-		this.inScale  = [1 / (Math.PI / 3), 1 / 10, 1 / 5, 1 / 3, 1 / (Math.PI / 6), 1 / 10];
+		//          pitch,             pitch_rate,  vel_cart, vel_cart_prev, vel_cart_target
+		this.inScale  = [1 / (Math.PI / 3), 1 / 10, 1 / 3,    1 / 3,         1 / 3];
 		this.outScale = 1 / 2000;   // normalize PWM to ±1
+	}
 
-		// Ranges over which we uniformly sample for random-mode training.
-		// Wider than the teacher's steady-state envelope so the NN learns the
-		// full response surface.
-		this.ranges = {
-			pitch:        [-Math.PI / 3, Math.PI / 3],   // ±60°
-			pitch_rate:   [-10, 10],                     // ±10 rad/s
-			x:            [-5, 5],                       // ±5 m
-			v:            [-3, 3],                       // ±3 m/s
-			target_angle: [-Math.PI / 6, Math.PI / 6],   // ±30°
-			dv:           [-10, 10],                     // cart accel, ±10 m/s²
+	// Build sample ranges from current nav gains. vel_cart_target is bounded
+	// by nav.v_max so the NN trains over the full commandable envelope.
+	_ranges(navGains) {
+		const v_max = navGains?.v_max ?? 3;
+		return {
+			pitch:           [-Math.PI / 3, Math.PI / 3],   // ±60°
+			pitch_rate:      [-10, 10],                     // ±10 rad/s
+			vel_cart:        [-3, 3],                       // ±3 m/s (encoder envelope)
+			vel_cart_prev:   [-3, 3],                       // sampled independently
+			vel_cart_target: [-v_max, v_max],
 		};
 	}
 
-	// Evaluate the teacher at a given state, setting its internal D-filter
-	// so that ArduBalance sees the claimed cart acceleration `dv`. This
-	// makes the teacher's PWM output actually depend on `dv`, so the NN
-	// has a reason to learn to use that input.
-	queryTeacher(state, gains, motor, dt) {
+	// Evaluate the teacher at a given state: nav's velocity-tracking step
+	// produces a target_angle, which the ArduBalance cascade converts to PWM.
+	queryTeacher(state, gains, navGains, motor, dt) {
+		const Kvel      = navGains?.Kvel      ?? 0.4;
+		const tiltLimit = navGains?.tiltLimit ?? Math.PI / 6;
+
+		let tilt = Kvel * (state.vel_cart_target - state.vel_cart);
+		if (tilt >  tiltLimit) tilt =  tiltLimit;
+		if (tilt < -tiltLimit) tilt = -tiltLimit;
+
 		const ab = new ArduBalanceController();
-		ab.target_angle = state.target_angle;
-		// raw_d = -(v - last_vmeas) / dt. Solve for last_vmeas such that
-		// raw_d = -state.dv (so d(v)/dt = state.dv).
-		ab.last_vmeas   = state.v - state.dv * dt;
-		// Put the LPF at the instantaneous value so speed_d_lpf = raw_d = -dv.
-		ab.speed_d_lpf  = -state.dv;
+		ab.target_angle = tilt;
+		// Init inner-loop D-state from the implied cart acceleration so the
+		// teacher's wheel_D term contributes meaningfully. ArduBalance computes
+		// raw_d = -(v - last_vmeas)/dt, and uses the LPF'd version. Settle the
+		// LPF at raw_d so steady-state response is captured in one call.
+		ab.last_vmeas  = state.vel_cart_prev;
+		const raw_d    = -(state.vel_cart - state.vel_cart_prev) / dt;
+		ab.speed_d_lpf = raw_d;
+
 		const sensors = {
 			pitch:      state.pitch,
 			pitch_rate: state.pitch_rate,
-			x:          state.x,
-			v:          state.v,
+			v:          state.vel_cart,
 		};
 		ab.updateVelocity(sensors, gains, dt);
 		ab.produceForce(sensors, gains, dt, motor);
@@ -59,27 +74,26 @@ export class NNTrainer {
 	}
 
 	// Generate a batch of random (state → teacher PWM) samples.
-	generateRandomBatch(n, gains, motor, dt) {
+	generateRandomBatch(n, gains, navGains, motor, dt) {
+		const ranges = this._ranges(navGains);
 		const inputs  = new Array(n);
 		const targets = new Array(n);
 		const r = (lo, hi) => lo + Math.random() * (hi - lo);
 		for (let i = 0; i < n; i++) {
 			const state = {
-				pitch:        r(...this.ranges.pitch),
-				pitch_rate:   r(...this.ranges.pitch_rate),
-				x:            r(...this.ranges.x),
-				v:            r(...this.ranges.v),
-				target_angle: r(...this.ranges.target_angle),
-				dv:           r(...this.ranges.dv),
+				pitch:           r(...ranges.pitch),
+				pitch_rate:      r(...ranges.pitch_rate),
+				vel_cart:        r(...ranges.vel_cart),
+				vel_cart_prev:   r(...ranges.vel_cart_prev),
+				vel_cart_target: r(...ranges.vel_cart_target),
 			};
-			const pwm = this.queryTeacher(state, gains, motor, dt);
-			const row = new Float64Array(6);
-			row[0] = state.pitch        * this.inScale[0];
-			row[1] = state.pitch_rate   * this.inScale[1];
-			row[2] = state.x            * this.inScale[2];
-			row[3] = state.v            * this.inScale[3];
-			row[4] = state.target_angle * this.inScale[4];
-			row[5] = state.dv           * this.inScale[5];
+			const pwm = this.queryTeacher(state, gains, navGains, motor, dt);
+			const row = new Float64Array(5);
+			row[0] = state.pitch           * this.inScale[0];
+			row[1] = state.pitch_rate      * this.inScale[1];
+			row[2] = state.vel_cart        * this.inScale[2];
+			row[3] = state.vel_cart_prev   * this.inScale[3];
+			row[4] = state.vel_cart_target * this.inScale[4];
 			inputs[i]  = row;
 			targets[i] = [pwm * this.outScale];
 		}
@@ -87,17 +101,14 @@ export class NNTrainer {
 	}
 
 	// Convert a recorded dataset to training-ready (normalized) arrays.
-	// `dv` is derived by finite-differencing successive `v` samples at dt.
-	prepareDataset(data, dt) {
+	// Recorder format: inputs = [pitch, pitch_rate, vel_cart, vel_cart_prev, vel_cart_target].
+	prepareDataset(data) {
 		const inputs  = new Array(data.length);
 		const targets = new Array(data.length);
 		for (let n = 0; n < data.length; n++) {
-			const src  = data[n].inputs;           // [pitch, pitch_rate, x, v, target_angle]
-			const prev = n > 0 ? data[n - 1].inputs : src;
-			const dv   = (src[3] - prev[3]) / dt;
-			const row  = new Float64Array(6);
+			const src = data[n].inputs;
+			const row = new Float64Array(5);
 			for (let i = 0; i < 5; i++) row[i] = src[i] * this.inScale[i];
-			row[5] = dv * this.inScale[5];
 			inputs[n]  = row;
 			targets[n] = [data[n].output * this.outScale];
 		}
@@ -109,16 +120,16 @@ export class NNTrainer {
 	// Random mode regenerates a fresh batch each epoch (infinite data).
 	// Recorded mode loops over the captured buffer.
 	async train({ mlp, mode = 'random',
-	              data = null, gains = null, motor = null, dt = 1 / 400,
+	              data = null, gains = null, navGains = null, motor = null, dt = 1 / 400,
 	              epochs = 3000, samplesPerEpoch = 1000,
 	              lr = 0.02, momentum = 0.9, onProgress }) {
 		const losses = [];
 		let prepared = null;
-		if (mode === 'recorded') prepared = this.prepareDataset(data, dt);
+		if (mode === 'recorded') prepared = this.prepareDataset(data);
 
 		for (let e = 0; e < epochs; e++) {
 			const batch = mode === 'random'
-				? this.generateRandomBatch(samplesPerEpoch, gains, motor, dt)
+				? this.generateRandomBatch(samplesPerEpoch, gains, navGains, motor, dt)
 				: prepared;
 			const loss = mlp.trainEpoch(batch.inputs, batch.targets, lr, momentum);
 			losses.push(loss);
