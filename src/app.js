@@ -363,35 +363,47 @@ export class App {
 			const navDt = Math.max(0.001, Math.min(0.1, (ts - (this._lastNavTs || ts)) / 1000));
 			this._lastNavTs = ts;
 
-			// Periodic replan in lidar_astar mode. The bot's map of the world
-			// changes as it drives — a path planned 5 s ago against an empty
-			// map needs to detour around walls discovered since. Replans
-			// from the bot's current position to the original goal and
-			// replaces the waypoint queue wholesale.
-			if (this.planner.mode === 'lidar_astar' && this.planner.goal
-			    && (ts - this._lastReplanT) > 1000) {
-				this._lastReplanT = ts;
+			// Replan in lidar_astar mode — but ONLY when the current path is
+			// invalidated by newly-mapped walls (LOS broken on some segment),
+			// or it's been a long time since the last refresh. Replanning
+			// every second made the bot jitter: A* would find a slightly
+			// different path each tick and the immediate target kept jumping.
+			// Now the path stays stable until a wall actually cuts it.
+			if (this.planner.mode === 'lidar_astar' && this.planner.goal) {
 				const start = this.measured ?? this.plant.state;
-				const path = this.planner.plan(
-					{ x: start.x, z: start.z ?? 0 }, this.planner.goal,
-					// pad > Safety.distMin (0.5) so paths stay clear of the
-					// brake zone — otherwise A* plans through cells the
-					// Safety governor would refuse to drive into.
-					{ obstacles: this.occupancyGrid, res: 0.25, pad: 0.6 },
-				);
-				if (path.length > 0) {
-					this.waypoints.length = 0;
-					this.waypoints.push(...path);
-					this.nav.target_x = path[0].x;
-					this.nav.target_z = path[0].z;
+				const startPos = { x: start.x, z: start.z ?? 0 };
+
+				let pathBlocked = false;
+				let prev = startPos;
+				for (const wp of this.waypoints) {
+					if (!this.occupancyGrid.hasLineOfSight(prev, wp, 0.6)) {
+						pathBlocked = true; break;
+					}
+					prev = wp;
 				}
-				// Diagnostic — dump path length + first detour point so we can
-				// see whether A* is actually finding a route around walls.
-				const head = path[0] ?? { x: NaN, z: NaN };
-				const next = path[1] ?? { x: NaN, z: NaN };
-				this.ui.log(this.tSim,
-					`replan: n=${path.length} head=(${head.x.toFixed(2)},${head.z.toFixed(2)}) ` +
-					`next=(${next.x.toFixed(2)},${next.z.toFixed(2)})`);
+				const stale = (ts - this._lastReplanT) > 10000;   // 10s refresh
+				const noPath = this.waypoints.length === 0;
+
+				if (pathBlocked || stale || noPath) {
+					this._lastReplanT = ts;
+					const path = this.planner.plan(
+						startPos, this.planner.goal,
+						{ obstacles: this.occupancyGrid, res: 0.25, pad: 0.6 },
+					);
+					if (path.length > 0) {
+						this.waypoints.length = 0;
+						this.waypoints.push(...path);
+						this.nav.target_x = path[0].x;
+						this.nav.target_z = path[0].z;
+					}
+					const head = path[0] ?? { x: NaN, z: NaN };
+					const next = path[1] ?? { x: NaN, z: NaN };
+					const reason = pathBlocked ? 'blocked' : stale ? 'stale' : 'first';
+					this.ui.log(this.tSim,
+						`replan (${reason}): n=${path.length} ` +
+						`head=(${head.x.toFixed(2)},${head.z.toFixed(2)}) ` +
+						`next=(${next.x.toFixed(2)},${next.z.toFixed(2)})`);
+				}
 			}
 
 
