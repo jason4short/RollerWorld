@@ -1,18 +1,27 @@
 // Data recorder for controller distillation.
 //
-// Captures (inputs, output) pairs at the inner-loop rate while the
-// ArduBalance controller is running. The buffered data becomes the
-// supervised training set for the NN replacement.
+// Captures (inputs → output) tuples at the inner-loop rate while a
+// controller is running. The buffered data becomes the supervised
+// training set for an imitation-learning NN.
 //
-// Input vector (5): { pitch, pitch_rate, vel_cart, vel_cart_prev, vel_cart_target }
-//   pitch, pitch_rate, vel_cart  — sensor state (what the bot observes)
-//   vel_cart_prev                — last tick's cart velocity (damping channel)
-//   vel_cart_target              — commanded body-frame velocity from nav/FBW
-// Output (1): PWM
+// Two recording flavors share one buffer; each entry is tagged with `kind`
+// so trainers can filter:
 //
-// Note: we deliberately exclude target_angle and vel_command (intermediate
-// outputs of the cascade) because at NN inference time the NN replaces the
-// whole pipeline and only sees vel_cart_target.
+//   kind: 'ardubalance'      legacy whole-stack distillation
+//     inputs: [pitch, pitch_rate, vel_cart, vel_cart_prev, vel_cart_target]
+//     output: pwm
+//
+//   kind: 'cascade_mixer'    distill the Mixer's velocity → tilt step
+//     vel_lpf, vel_target, pitch_target
+//
+//   kind: 'cascade_pitch'    distill Attitude's pitch arm
+//     pitch, pitch_rate, pitch_target, force_fwd
+//
+// The pedagogy: random sampling covers the whole input envelope and the NN
+// learns the whole function. Recorded sampling only covers the trajectories
+// the bot actually visited — so the NN balances fine on the rehearsed
+// flight but falls down on disturbances it never saw. That's the classic
+// imitation-learning failure mode, made visible.
 
 export class Recorder {
 	constructor() {
@@ -25,23 +34,40 @@ export class Recorder {
 	stop()   { this.recording = false; }
 	clear()  { this.data.length = 0; }
 	size()   { return this.data.length; }
+	count(kind) { return this.data.reduce((n, d) => n + (d.kind === kind ? 1 : 0), 0); }
 
-	// Call this from App.tick() at each inner-loop tick while a controller
-	// is running. We record the inputs the NN will be given at inference
-	// time, paired with the PWM that ArduBalance chose to output.
+	// ArduBalance whole-stack: sensor state → PWM.
 	record({ pitch, pitch_rate, vel_cart, vel_cart_target, pwm }) {
 		if (!this.recording) return;
 		this.data.push({
+			kind: 'ardubalance',
 			inputs: [pitch, pitch_rate, vel_cart, this.vel_cart_prev, vel_cart_target],
 			output: pwm,
 		});
 		this.vel_cart_prev = vel_cart;
 	}
 
+	// Cascade Mixer: velocity error → tilt command.
+	recordCascadeMixer({ vel_lpf, vel_target, pitch_target }) {
+		if (!this.recording) return;
+		this.data.push({
+			kind: 'cascade_mixer',
+			vel_lpf, vel_target, pitch_target,
+		});
+	}
+
+	// Cascade Attitude pitch arm: pitch state + target → force.
+	recordCascadePitch({ pitch, pitch_rate, pitch_target, force_fwd }) {
+		if (!this.recording) return;
+		this.data.push({
+			kind: 'cascade_pitch',
+			pitch, pitch_rate, pitch_target, force_fwd,
+		});
+	}
+
 	// Bulk serialize — useful for offline training or inspection.
 	toJSON() {
 		return JSON.stringify({
-			keys: ['pitch', 'pitch_rate', 'vel_cart', 'vel_cart_prev', 'vel_cart_target'],
 			data: this.data,
 		});
 	}

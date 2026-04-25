@@ -103,16 +103,17 @@ export class NNTrainer {
 	}
 
 	// Convert a recorded dataset to training-ready (normalized) arrays.
-	// Recorder format: inputs = [pitch, pitch_rate, vel_cart, vel_cart_prev, vel_cart_target].
+	// Buffer is shared across recording flavors; filter to ArduBalance.
 	prepareDataset(data) {
-		const inputs  = new Array(data.length);
-		const targets = new Array(data.length);
-		for (let n = 0; n < data.length; n++) {
-			const src = data[n].inputs;
+		const rows = data.filter(d => d.kind === 'ardubalance');
+		const inputs  = new Array(rows.length);
+		const targets = new Array(rows.length);
+		for (let n = 0; n < rows.length; n++) {
+			const src = rows[n].inputs;
 			const row = new Float64Array(5);
 			for (let i = 0; i < 5; i++) row[i] = src[i] * this.inScale[i];
 			inputs[n]  = row;
-			targets[n] = [data[n].output * this.outScale];
+			targets[n] = [rows[n].output * this.outScale];
 		}
 		return { inputs, targets };
 	}
@@ -182,11 +183,33 @@ export class NNTrainer {
 		return { inputs, targets };
 	}
 
-	async trainMixer({ mlp, mixerGains, epochs = 500, samplesPerEpoch = 500,
+	// Build a fixed batch from recorded cascade_mixer rows. Trainers
+	// replay the same batch each epoch — no fresh sampling.
+	prepareMixerRecorded(data) {
+		const inScale  = NavMixer.NN_INPUT_SCALES;
+		const outScale = 1 / NavMixer.NN_OUTPUT_SCALE;
+		const rows = data.filter(d => d.kind === 'cascade_mixer');
+		const inputs  = new Array(rows.length);
+		const targets = new Array(rows.length);
+		for (let i = 0; i < rows.length; i++) {
+			const r = rows[i];
+			const row = new Float64Array(2);
+			row[0] = r.vel_lpf    * inScale[0];
+			row[1] = r.vel_target * inScale[1];
+			inputs[i]  = row;
+			targets[i] = [r.pitch_target * outScale];
+		}
+		return { inputs, targets };
+	}
+
+	async trainMixer({ mlp, mixerGains, mode = 'random', data = null,
+	                   epochs = 500, samplesPerEpoch = 500,
 	                   lr = 0.02, momentum = 0.9, onProgress }) {
 		const losses = [];
+		const recorded = mode === 'recorded' ? this.prepareMixerRecorded(data) : null;
+
 		for (let e = 0; e < epochs; e++) {
-			const batch = this.generateMixerBatch(samplesPerEpoch, mixerGains);
+			const batch = recorded ?? this.generateMixerBatch(samplesPerEpoch, mixerGains);
 			const loss  = mlp.trainEpoch(batch.inputs, batch.targets, lr, momentum);
 			losses.push(loss);
 			if (onProgress && (e % 5 === 0 || e === epochs - 1)) {
@@ -197,11 +220,32 @@ export class NNTrainer {
 		return losses;
 	}
 
-	async trainAttitudePitch({ mlp, attGains, epochs = 1000, samplesPerEpoch = 1000,
+	prepareAttitudePitchRecorded(data) {
+		const inScale  = Attitude.PITCH_ARM_INPUT_SCALES;
+		const outScale = 1 / Attitude.PITCH_ARM_OUTPUT_SCALE;
+		const rows = data.filter(d => d.kind === 'cascade_pitch');
+		const inputs  = new Array(rows.length);
+		const targets = new Array(rows.length);
+		for (let i = 0; i < rows.length; i++) {
+			const r = rows[i];
+			const row = new Float64Array(3);
+			row[0] = r.pitch        * inScale[0];
+			row[1] = r.pitch_rate   * inScale[1];
+			row[2] = r.pitch_target * inScale[2];
+			inputs[i]  = row;
+			targets[i] = [r.force_fwd * outScale];
+		}
+		return { inputs, targets };
+	}
+
+	async trainAttitudePitch({ mlp, attGains, mode = 'random', data = null,
+	                           epochs = 1000, samplesPerEpoch = 1000,
 	                           lr = 0.02, momentum = 0.9, onProgress }) {
 		const losses = [];
+		const recorded = mode === 'recorded' ? this.prepareAttitudePitchRecorded(data) : null;
+
 		for (let e = 0; e < epochs; e++) {
-			const batch = this.generateAttitudePitchBatch(samplesPerEpoch, attGains);
+			const batch = recorded ?? this.generateAttitudePitchBatch(samplesPerEpoch, attGains);
 			const loss  = mlp.trainEpoch(batch.inputs, batch.targets, lr, momentum);
 			losses.push(loss);
 			if (onProgress && (e % 5 === 0 || e === epochs - 1)) {

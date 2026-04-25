@@ -211,6 +211,7 @@
       <button id="btnTrainMixerNN" class="warn">Train mixer NN</button>
     </div>
     <div id="mixerNNStats" style="font-size:11px; color:#888; margin-top:4px"></div>
+    <canvas id="plotMixer" width="260" height="70" style="margin-top:6px; width:100%; background:#0a0a0a; border:1px solid #222"></canvas>
   </details>
 
   <details class="panel" data-ctrl="cascade" open>
@@ -229,6 +230,7 @@
       <button id="btnTrainPitchNN" class="warn">Train pitch NN</button>
     </div>
     <div id="pitchNNStats" style="font-size:11px; color:#888; margin-top:4px"></div>
+    <canvas id="plotAttPitch" width="260" height="70" style="margin-top:6px; width:100%; background:#0a0a0a; border:1px solid #222"></canvas>
   </details>
 
   <details class="panel" data-ctrl="cascade">
@@ -237,6 +239,7 @@
     <label>yaw_rate_max (rad/s)      <input type="number" id="att_yaw_rate_max" value="1.5" step="0.1"></label>
     <label>yaw_rate_P (N·m·s/rad)    <input type="number" id="att_yaw_rate_P"   value="0.5" step="0.05"></label>
     <label>torque_max (N·m)          <input type="number" id="att_torque_max"   value="2"   step="0.1"></label>
+    <canvas id="plotAttYaw" width="260" height="70" style="margin-top:6px; width:100%; background:#0a0a0a; border:1px solid #222"></canvas>
   </details>
 
   <details class="panel" data-ctrl="cascade">
@@ -246,6 +249,7 @@
     <label>force_I (PWM/(N·s))   <input type="number" id="force_I"        value="200"  step="10"></label>
     <label>force_I_max (PWM)     <input type="number" id="force_I_max"    value="500"  step="50"></label>
     <label>extra deadband (PWM)  <input type="number" id="deadband_extra" value="0"    step="5"></label>
+    <canvas id="plotWheels" width="260" height="70" style="margin-top:6px; width:100%; background:#0a0a0a; border:1px solid #222"></canvas>
   </details>
 
   <details class="panel" data-ctrl="pid">

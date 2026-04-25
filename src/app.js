@@ -55,6 +55,15 @@ export class App {
 		this.recorder 			= new Recorder();
 		this.renderer 			= new WorldRenderer3D(document.getElementById('world'));
 		this.plotter			= new Plotter(document.getElementById('plot'));
+		// Per-layer inset plots inside each cascade panel — let the visitor
+		// see each layer's input/output rolling alongside its gain panel.
+		// Short window (3 s) so transients are vivid without scrolling.
+		this.panelPlots = {
+			mixer:  new Plotter(document.getElementById('plotMixer'),    3),
+			pitch:  new Plotter(document.getElementById('plotAttPitch'), 3),
+			yaw:    new Plotter(document.getElementById('plotAttYaw'),   3),
+			wheels: new Plotter(document.getElementById('plotWheels'),   3),
+		};
 		this.experiment 		= new ExperimentRunner(this.DT);
 
 		this.running 	= false;
@@ -170,7 +179,41 @@ export class App {
 		const pwmRef = this.motor.PWM_max || 2000;
 		const series = this.buildPlotSeries(fRef, pwmRef);
 		this.plotter.draw(this.history, series);
+		this.drawPanelPlots(pwmRef);
 		this.ui.setStats(this.tSim, this.plant.state, this.pilotTilt);
+	}
+
+	// Inset plots inside each cascade panel. Each shows the few signals
+	// that layer produces or consumes, scaled so a healthy controller
+	// fills roughly half the canvas height. When cascade isn't active,
+	// the panels are hidden anyway, so we can skip drawing.
+	drawPanelPlots(pwmRef) {
+		if (this.controllerType !== 'cascade') return;
+		const tiltLim   = Math.PI / 6;
+		const forceLim  = this.ui.num('att_force_max') || 60;
+		const torqueLim = this.ui.num('att_torque_max') || 2;
+		const SIGNALS = {
+			mixer: [
+				{ key: 'vel_cart',     color: '#6cf', scale: 1 / 3,      label: 'vel' },
+				{ key: 'vel_desired',  color: '#fc6', scale: 1 / 3,      label: 'target' },
+				{ key: 'pitch_target', color: '#f6c', scale: 1 / tiltLim, label: 'tilt' },
+			],
+			pitch: [
+				{ key: 'pitch',        color: '#6cf', scale: 1 / tiltLim, label: 'pitch' },
+				{ key: 'pitch_target', color: '#fc6', scale: 1 / tiltLim, label: 'target' },
+				{ key: 'force_fwd',    color: '#6f9', scale: 1 / forceLim, label: 'force' },
+			],
+			yaw: [
+				{ key: 'torque_yaw',   color: '#f6c', scale: 1 / torqueLim, label: 'τ_yaw' },
+			],
+			wheels: [
+				{ key: 'pwm_left',     color: '#6cf', scale: 1 / pwmRef, label: 'L' },
+				{ key: 'pwm_right',    color: '#fc6', scale: 1 / pwmRef, label: 'R' },
+			],
+		};
+		for (const [name, plotter] of Object.entries(this.panelPlots)) {
+			plotter.draw(this.history, SIGNALS[name]);
+		}
 	}
 
 	populatePlotMenus() {
@@ -342,6 +385,23 @@ export class App {
 						this.lastForce  = out.wheelOut.force_fwd_actual;
 						this.lastTauYaw = out.wheelOut.torque_yaw_actual;
 						this._lastStackOut = out;
+
+						// Record cascade-layer tuples while running. Captures both
+						// Mixer and Attitude-pitch streams so a single recording
+						// session feeds either layer NN's recorded-mode trainer.
+						if (this.recorder.recording) {
+							this.recorder.recordCascadeMixer({
+								vel_lpf:      this.stack.mixer.vel_lpf,
+								vel_target:   this.stack.mixer.vel_target,
+								pitch_target: this.stack.mixer.pitch_target,
+							});
+							this.recorder.recordCascadePitch({
+								pitch:        this.measured.pitch,
+								pitch_rate:   this.measured.pitch_rate,
+								pitch_target: this.stack.mixer.pitch_target,
+								force_fwd:    this.stack.attitude.lastForceFwd,
+							});
+						}
 					} else {
 						const measInner = controller instanceof PIDController
 							? { ...this.measured, pitch: this.measured.pitch - tiltSetpoint }
@@ -471,8 +531,16 @@ export class App {
 		const recBtn	 = document.getElementById('btnRecord');
 		const recStats = document.getElementById('recStats');
 		const refreshRecStats = () => {
-			recStats.textContent = `${this.recorder.size()} samples` +
-				(this.recorder.recording ? ' (recording…)' : '');
+			const ardu  = this.recorder.count('ardubalance');
+			const mixer = this.recorder.count('cascade_mixer');
+			const pitch = this.recorder.count('cascade_pitch');
+			const parts = [];
+			if (ardu)  parts.push(`${ardu} ardu`);
+			if (mixer) parts.push(`${mixer} mixer`);
+			if (pitch) parts.push(`${pitch} pitch`);
+			const detail = parts.length ? `  (${parts.join(', ')})` : '';
+			recStats.textContent = `${this.recorder.size()} samples${detail}` +
+				(this.recorder.recording ? '  [recording…]' : '');
 		};
 		recBtn.onclick = () => {
 			if (this.recorder.recording) {
@@ -729,8 +797,9 @@ export class App {
 		const lr			= +document.getElementById('nnLR').value;
 		const nnStats = document.getElementById('nnStats');
 
-		if (mode === 'recorded' && this.recorder.data.length < 50) {
-			this.ui.log(this.tSim, `need more recorded samples (have ${this.recorder.data.length}, want ≥50)`);
+		const arduCount = this.recorder.count('ardubalance');
+		if (mode === 'recorded' && arduCount < 50) {
+			this.ui.log(this.tSim, `need more recorded ArduBalance samples (have ${arduCount}, want ≥50)`);
 			return;
 		}
 
@@ -782,15 +851,25 @@ export class App {
 		const lr      = +document.getElementById('nnLR').value;
 		const stats   = document.getElementById('mixerNNStats');
 
+		const mode = document.getElementById('nnMode').value;
+		const recordedCount = this.recorder.count('cascade_mixer');
+		if (mode === 'recorded' && recordedCount < 50) {
+			this.ui.log(this.tSim, `need more recorded cascade_mixer samples (have ${recordedCount}, want ≥50)`);
+			return;
+		}
+
 		const mlp = new MLP(2, hidden, 1);
 		const mixerGains = this.ui.readCascadeGains().mixer;
-		stats.textContent = `training: 0/${epochs}, ${samples} random/epoch, ${mlp.paramCount()} params`;
-		this.ui.log(this.tSim, `training mixer NN (${hidden} hidden, ${mlp.paramCount()} params)`);
+		const srcDesc = mode === 'random' ? `${samples} random/epoch` : `${recordedCount} recorded`;
+		stats.textContent = `training (${mode}): 0/${epochs}, ${srcDesc}, ${mlp.paramCount()} params`;
+		this.ui.log(this.tSim, `training mixer NN (${mode}, ${hidden} hidden, ${mlp.paramCount()} params)`);
 
 		const lossHistory = [];
 		const t0 = performance.now();
 		await this.nnTrainer.trainMixer({
-			mlp, mixerGains, epochs, samplesPerEpoch: samples, lr, momentum: 0.9,
+			mlp, mixerGains,
+			mode, data: this.recorder.data,
+			epochs, samplesPerEpoch: samples, lr, momentum: 0.9,
 			onProgress: (e, loss) => {
 				lossHistory.push(loss);
 				stats.textContent = `epoch ${e + 1}/${epochs}	loss=${loss.toExponential(3)}`;
@@ -819,15 +898,25 @@ export class App {
 		const lr      = +document.getElementById('nnLR').value;
 		const stats   = document.getElementById('pitchNNStats');
 
+		const mode = document.getElementById('nnMode').value;
+		const recordedCount = this.recorder.count('cascade_pitch');
+		if (mode === 'recorded' && recordedCount < 50) {
+			this.ui.log(this.tSim, `need more recorded cascade_pitch samples (have ${recordedCount}, want ≥50)`);
+			return;
+		}
+
 		const mlp = new MLP(3, hidden, 1);
 		const attGains = this.ui.readCascadeGains().attitude;
-		stats.textContent = `training: 0/${epochs}, ${samples} random/epoch, ${mlp.paramCount()} params`;
-		this.ui.log(this.tSim, `training pitch-arm NN (${hidden} hidden, ${mlp.paramCount()} params)`);
+		const srcDesc = mode === 'random' ? `${samples} random/epoch` : `${recordedCount} recorded`;
+		stats.textContent = `training (${mode}): 0/${epochs}, ${srcDesc}, ${mlp.paramCount()} params`;
+		this.ui.log(this.tSim, `training pitch-arm NN (${mode}, ${hidden} hidden, ${mlp.paramCount()} params)`);
 
 		const lossHistory = [];
 		const t0 = performance.now();
 		await this.nnTrainer.trainAttitudePitch({
-			mlp, attGains, epochs, samplesPerEpoch: samples, lr, momentum: 0.9,
+			mlp, attGains,
+			mode, data: this.recorder.data,
+			epochs, samplesPerEpoch: samples, lr, momentum: 0.9,
 			onProgress: (e, loss) => {
 				lossHistory.push(loss);
 				stats.textContent = `epoch ${e + 1}/${epochs}	loss=${loss.toExponential(3)}`;
