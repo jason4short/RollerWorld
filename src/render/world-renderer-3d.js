@@ -106,6 +106,16 @@ export class WorldRenderer3D {
 		this.pathLine.visible = false;
 		this.scene.add(this.pathLine);
 
+		// Lidar rays — N short line segments from the bot to each scan hit.
+		// Built lazily (vertex buffer sized on first setLidar() call).
+		this.lidarLines = new THREE.LineSegments(
+			new THREE.BufferGeometry(),
+			new THREE.LineBasicMaterial({ color: 0xffee88, transparent: true, opacity: 0.55 }),
+		);
+		this.lidarLines.frustumCulled = false;
+		this.lidarLines.visible = false;
+		this.scene.add(this.lidarLines);
+
 		// Obstacle course
 		this.obstacles = new Obstacles();
 		this.obstacles.loadDemoCourse();
@@ -280,6 +290,30 @@ export class WorldRenderer3D {
 	// pans-with-bot and never rotates around to behind it.
 	setAutoFollow(enabled) {
 		this.autoFollowEnabled = !!enabled;
+	}
+
+	// rays: array of { hit_x, hit_z } from Lidar.scan(). Drawn as line
+	// segments from the bot up to each hit. Bot origin is the line start.
+	// Pass null/empty to hide.
+	setLidar(rays, botPos, height = 0.18) {
+		if (!rays || rays.length === 0) {
+			this.lidarLines.visible = false;
+			return;
+		}
+		const verts = new Float32Array(rays.length * 6);   // 2 verts × 3 floats per ray
+		for (let i = 0; i < rays.length; i++) {
+			const r = rays[i];
+			const j = i * 6;
+			verts[j + 0] = botPos.x;
+			verts[j + 1] = height;
+			verts[j + 2] = botPos.z;
+			verts[j + 3] = r.hit_x;
+			verts[j + 4] = height;
+			verts[j + 5] = r.hit_z;
+		}
+		this.lidarLines.geometry.setAttribute('position', new THREE.BufferAttribute(verts, 3));
+		this.lidarLines.geometry.computeBoundingSphere();
+		this.lidarLines.visible = true;
 	}
 
 	// path: array of {x, z} — Planner's current path. Drawn as a thin

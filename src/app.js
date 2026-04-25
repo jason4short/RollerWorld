@@ -1,6 +1,7 @@
 import { Pendulum }							from './physics/pendulum.js';
 import { Motor }								 from './physics/motor.js';
 import { Sensors }							 from './physics/sensors.js';
+import { Lidar }								 from './physics/lidar.js';
 import { PIDController }				 from './controllers/pid.js';
 import { ArduBalanceController } from './controllers/ardubalance.js';
 import { NavController }				 from './controllers/nav.js';
@@ -50,6 +51,8 @@ export class App {
 		this.stack 				= new ControllerStack();
 		this._lastStackOut		= null;
 		this.planner			= new Planner();
+		this.lidar				= new Lidar({ rays: 24, maxRange: 5 });
+		this.lidarEnabled		= true;
 		this.currentTab			= 'control';   // 'control' | 'sim'
 
 		// Disturbance state — biases / impulses injected by the Disturbances
@@ -187,6 +190,16 @@ export class App {
 		this.renderer.setPath(this.waypoints.length
 			? [{ x: this.plant.state.x, z: this.plant.state.z ?? 0 }, ...this.waypoints]
 			: []);
+
+		// Lidar — fan of raycasts from the bot. Currently visualization-only;
+		// no controller consumes the ranges yet (perception layer comes next).
+		if (this.lidarEnabled) {
+			const rays = this.lidar.scan(this.plant.state, this.renderer.obstacles);
+			this.renderer.setLidar(rays, this.plant.state);
+		} else {
+			this.renderer.setLidar(null);
+		}
+
 		this.renderer.draw(this.plant.state, this.plant.params, navTarget, queueRest);
 		const fRef = this.controllerType === 'ardubalance'
 			? this.motor.Km
@@ -653,6 +666,13 @@ export class App {
 			btnCamFollow.classList.toggle('active', enabled);
 			this.renderer.setAutoFollow(enabled);
 			this.ui.log(this.tSim, `camera follow: ${enabled ? 'on' : 'off'}`);
+		};
+
+		const btnLidar = document.getElementById('btnLidar');
+		btnLidar.onclick = () => {
+			this.lidarEnabled = !btnLidar.classList.contains('active');
+			btnLidar.classList.toggle('active', this.lidarEnabled);
+			this.ui.log(this.tSim, `lidar: ${this.lidarEnabled ? 'on' : 'off'}`);
 		};
 
 		// Disturbances — instantaneous state kicks, plus a toggleable IMU bias.

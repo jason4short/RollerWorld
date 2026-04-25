@@ -124,6 +124,42 @@ export class Obstacles {
 		return false;
 	}
 
+	// Cast a ray from `origin` in `direction` (unit vector in x/z), return
+	// the distance to the nearest wall hit, or `maxRange` if nothing hit.
+	// Slab method against each wall's rotated AABB — exact, allocation-free.
+	castRay(origin, direction, maxRange = 8) {
+		let minDist = maxRange;
+		for (const it of this.items) {
+			if (it.type !== 'wall') continue;
+			// Transform ray into the wall's local (yaw-cancelled) frame.
+			const dx = origin.x - it.position[0];
+			const dz = origin.z - it.position[1];
+			const cs = Math.cos(-it.yaw), sn = Math.sin(-it.yaw);
+			const lox = dx           * cs - dz           * sn;
+			const loz = dx           * sn + dz           * cs;
+			const ldx = direction.x  * cs - direction.z  * sn;
+			const ldz = direction.x  * sn + direction.z  * cs;
+
+			const hx = it.length    / 2;
+			const hz = it.thickness / 2;
+
+			// Slab intersection — tolerate ldx/ldz of 0 via infinities.
+			const inv_x = ldx !== 0 ? 1 / ldx : Infinity;
+			const inv_z = ldz !== 0 ? 1 / ldz : Infinity;
+			const t1x = (-hx - lox) * inv_x, t2x = (hx - lox) * inv_x;
+			const t1z = (-hz - loz) * inv_z, t2z = (hz - loz) * inv_z;
+			const tmin = Math.max(Math.min(t1x, t2x), Math.min(t1z, t2z));
+			const tmax = Math.min(Math.max(t1x, t2x), Math.max(t1z, t2z));
+			if (tmax < 0 || tmin > tmax) continue;   // miss
+
+			// First positive hit; if origin is inside the wall (tmin<0), that's
+			// degenerate — treat as zero distance.
+			const t = tmin >= 0 ? tmin : 0;
+			if (t < minDist) minDist = t;
+		}
+		return minDist;
+	}
+
 	// Line-of-sight test by sub-sampling the segment. Used for path
 	// smoothing — if a→b is unblocked, we can skip intermediate waypoints.
 	hasLineOfSight(a, b, pad = 0.2) {
