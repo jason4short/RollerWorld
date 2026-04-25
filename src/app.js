@@ -191,14 +191,12 @@ export class App {
 			? [{ x: this.plant.state.x, z: this.plant.state.z ?? 0 }, ...this.waypoints]
 			: []);
 
-		// Lidar — fan of raycasts from the bot. Currently visualization-only;
-		// no controller consumes the ranges yet (perception layer comes next).
-		if (this.lidarEnabled) {
-			const rays = this.lidar.scan(this.plant.state, this.renderer.obstacles);
-			this.renderer.setLidar(rays, this.plant.state);
-		} else {
-			this.renderer.setLidar(null);
-		}
+		// Lidar — read the latest scan from sensors (computed at sensorHz)
+		// and hand to renderer for visualization.
+		this.renderer.setLidar(
+			(this.lidarEnabled && this.measured?.lidar) ? this.measured.lidar : null,
+			this.plant.state,
+		);
 
 		this.renderer.draw(this.plant.state, this.plant.params, navTarget, queueRest);
 		const fRef = this.controllerType === 'ardubalance'
@@ -426,6 +424,12 @@ export class App {
 					// eventually absorb a real fixed bias; a step bias exposes
 					// the time constant.
 					if (this.imuBiasInjected !== 0) this.measured.pitch += this.imuBiasInjected;
+					// Lidar is a sensor too — runs at sensorHz alongside the IMU
+					// and encoder. The Safety governor in the cascade reads it
+					// from `measured.lidar`; the renderer reads it for viz.
+					if (this.lidarEnabled) {
+						this.measured.lidar = this.lidar.scan(this.plant.state, this.renderer.obstacles);
+					}
 					this.dueSensor += dtSensor;
 				}
 

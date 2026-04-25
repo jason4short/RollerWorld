@@ -38,6 +38,7 @@ import { Nav      } from './nav.js';
 import { NavMixer } from './mixer.js';
 import { Attitude } from './attitude.js';
 import { Wheels   } from './wheels.js';
+import { Safety   } from './safety.js';
 
 const DEFAULT_RATES = { nav: 60, mixer: 100, attitude: 100, wheels: 400 };
 
@@ -47,6 +48,7 @@ export class ControllerStack {
 		this.mixer    = new NavMixer();
 		this.attitude = new Attitude();
 		this.wheels   = new Wheels();
+		this.safety   = new Safety();
 		this.setRates(rates);
 
 		// Last output of each layer (zero-order hold between firings).
@@ -92,6 +94,12 @@ export class ControllerStack {
 		if (!tiltMode && this.tNav >= this.dtNav) {
 			this.navOut = this._runNav(sensors, command, gains.nav, this.tNav);
 			this.tNav = 0;
+		}
+		// Safety modulation runs at the wheels rate even between Nav firings
+		// so the bot reacts to a sudden close obstacle faster than Nav decides.
+		// In tilt mode, no velocity loop is active — skip.
+		if (!tiltMode) {
+			this.navOut = this.safety.apply(this.navOut, sensors, gains.safety);
 		}
 		if (!tiltMode && this.tMixer >= this.dtMixer) {
 			this.mixerOut = this.mixer.update(this.navOut, sensors, gains.mixer, this.tMixer);

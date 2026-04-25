@@ -148,6 +148,14 @@ export class UI {
         deadband_extra: this.num('deadband_extra'),
         PWM_max:        this.num('PWM_max'),
       },
+      // Safety governor — clips Nav's vel_target based on forward lidar.
+      // Hardcoded defaults for now; expose a panel later if tuning matters.
+      safety: {
+        enabled:    true,
+        distMin:    0.5,           // full stop within this range (m)
+        distMax:    2.5,           // full speed beyond this range (m)
+        forwardArc: Math.PI / 4,   // ±45° around heading counts as "ahead"
+      },
     };
   }
 
