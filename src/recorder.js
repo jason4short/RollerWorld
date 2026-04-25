@@ -9,7 +9,7 @@
 //   target_angle  — pilot/nav setpoint (the "goal" side of the mapping)
 // Output (1): PWM
 //
-// Note: we deliberately exclude v_cmd (the outer loop's output) because
+// Note: we deliberately exclude vel_command (the outer loop's output) because
 // at NN inference time there is no outer loop — the NN has to produce PWM
 // from the same information the raw bot has.
 

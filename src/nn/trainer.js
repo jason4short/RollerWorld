@@ -48,7 +48,7 @@ export class NNTrainer {
 		// Put the LPF at the instantaneous value so speed_d_lpf = raw_d = -dv.
 		ab.speed_d_lpf  = -state.dv;
 		const sensors = { th: state.th, w: state.w, x: state.x, v: state.v };
-		ab.updateOuter(sensors, gains, dt);
+		ab.updateVelocity(sensors, gains, dt);
 		ab.produceForce(sensors, gains, dt, motor);
 		return ab.lastPWM;
 	}

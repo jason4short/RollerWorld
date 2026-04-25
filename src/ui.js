@@ -14,13 +14,15 @@ export class UI {
 
   readParams() {
     return {
-      M:  this.num('M'),
-      m:  this.num('m'),
-      L:  this.num('L'),
-      R:  this.num('R'),
-      Iw: this.num('Iw'),
-      cx: this.num('cx'),
-      cp: this.num('cp'),
+      M:     this.num('M'),
+      m:     this.num('m'),
+      L:     this.num('L'),
+      R:     this.num('R'),
+      Iw:    this.num('Iw'),
+      cx:    this.num('cx'),
+      cp:    this.num('cp'),
+      I_yaw: this.num('I_yaw'),
+      c_yaw: this.num('c_yaw'),
     };
   }
 
@@ -77,6 +79,18 @@ export class UI {
 
   navEnabled() { return document.getElementById('navEnabled').checked; }
 
+  readPilotMode() {
+    const el = document.getElementById('pilotMode');
+    return el ? el.value : 'raw';
+  }
+
+  readYawGains() {
+    return {
+      Kyaw:      this.num('Kyaw'),
+      MaxTauYaw: this.num('MaxTauYaw'),
+    };
+  }
+
   readNavGains() {
     return {
       Kp_nav:      this.num('Kp_nav'),
@@ -87,6 +101,10 @@ export class UI {
       linear_zone: this.num('nav_linear_zone'),
       lookahead:   this.num('nav_lookahead'),
       tiltLimit:   this.num('nav_tiltLimit'),
+      Kheading:           this.num('Kheading'),
+      MaxYawRate:         this.num('MaxYawRate'),
+      yaw_disable_radius: this.num('yaw_disable_radius'),
+      yaw_speed_softness: this.num('yaw_speed_softness'),
     };
   }
 
@@ -104,28 +122,58 @@ export class UI {
     this.logEl.textContent = `[${t.toFixed(2)}] ${msg}\n` + this.logEl.textContent;
   }
 
-  // Snapshot of every numeric + select input (the full "tuning"). Matches
-  // the key names used in presets so the same shape round-trips.
+  // Single source of truth for "what fields make up a tuning."
+  // Numeric inputs read with `num()`. Select inputs and checkboxes need
+  // special handling — listed separately.
+  static TUNING_NUMERIC_IDS = [
+    // physics
+    'M', 'm', 'L', 'R', 'Iw', 'cx', 'cp', 'I_yaw', 'c_yaw',
+    'th0', 'noise',
+    // sensors & timing
+    'ticks_per_rev', 'imu_noise', 'gyro_noise',
+    'sensorHz', 'outerHz', 'innerHz',
+    // motor
+    'Km', 'Kv_motor', 'PWM_max', 'deadband',
+    // PID
+    'Kp', 'Ki', 'Kd', 'Kx', 'Kv', 'Fmax',
+    // ArduBalance
+    'bal_P', 'bal_D', 'bal_I', 'p_vel',
+    'wheel_P', 'wheel_I', 'wheel_D', 'ff_per_mps', 'dead_zone',
+    // Yaw control
+    'Kyaw', 'MaxTauYaw',
+    // Nav (drive)
+    'Kp_nav', 'Kd_nav',
+    'nav_v_max', 'nav_a_max', 'nav_Kvel',
+    'nav_linear_zone', 'nav_lookahead', 'nav_tiltLimit',
+    // Nav (yaw)
+    'Kheading', 'MaxYawRate', 'yaw_disable_radius', 'yaw_speed_softness',
+    // disturbance
+    'shoveOmega',
+    // NN training
+    'nnHidden', 'nnEpochs', 'nnSamples', 'nnLR',
+  ];
+
+  static TUNING_SELECT_IDS = ['ctrlType', 'navMode', 'nnMode', 'pilotMode'];
+
+  // Snapshot of every tuning-relevant input. All input IDs are kept
+  // verbatim, so writeAll() is a clean inverse of readAll().
   readAll() {
-    return {
-      ...this.readParams(),
-      th0: this.num('th0'), noise: this.num('noise'),
-      ...this.readSensors(),
-      ...this.readRates(),
-      Km: this.num('Km'), Kv_motor: this.num('Kv_motor'),
-      PWM_max: this.num('PWM_max'), deadband: this.num('deadband'),
-      ...this.readGains(),
-      ...this.readArduGains(),
-      ...this.readNavGains(),
-      navMode: this.readNavMode(),
-      shoveOmega: this.num('shoveOmega'),
-    };
+    const out = {};
+    for (const id of UI.TUNING_NUMERIC_IDS) {
+      const el = document.getElementById(id);
+      if (el) out[id] = +el.value;
+    }
+    for (const id of UI.TUNING_SELECT_IDS) {
+      const el = document.getElementById(id);
+      if (el) out[id] = el.value;
+    }
+    return out;
   }
 
   writeAll(t) {
     for (const [k, v] of Object.entries(t)) {
-      if (k === 'navMode') {
-        const el = document.getElementById('navMode');
+      if (UI.TUNING_SELECT_IDS.includes(k)) {
+        const el = document.getElementById(k);
         if (el) { el.value = v; el.dispatchEvent(new Event('change')); }
       } else {
         this.setNum(k, v);

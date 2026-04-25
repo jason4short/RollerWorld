@@ -3,7 +3,7 @@
 //
 // Interface (uniform across controllers):
 //   c.reset()
-//   c.updateOuter(sensors, gains, dt)   // no-op for single-rate PID
+//   c.updateVelocity(sensors, gains, dt)   // no-op for single-rate PID
 //   c.produceForce(sensors, gains, dt, motor)  → force (N) on cart
 //
 // sensors: { x, v, th, w }        quantized/noisy measurements from Sensors
@@ -20,7 +20,7 @@ export class PIDController {
 
   // Single-rate controller — outer loop is a no-op; all work happens in
   // produceForce() which runs at the inner-loop rate.
-  updateOuter() {}
+  updateVelocity() {}
 
   update(state, gains, dt) {
     const { Kp, Ki, Kd, Kx, Kv, Fmax } = gains;
@@ -30,8 +30,12 @@ export class PIDController {
     // With +θ = bob tilting in +x direction, catching the lean requires
     // pushing the cart in +x (+F). Angle loop dominates; cart-position
     // terms keep the bot from drifting.
+    // Position term uses encoder-measured body-frame distance (`x_body`)
+    // not world-frame `x` — otherwise yawing leaves a stale world-x error
+    // that the controller can't reduce by leaning along the new heading.
+    const xPos = state.x_body ?? state.x;
     let F = (Kp * state.th + Kd * state.w + Ki * this.I)
-          + (Kx * state.x + Kv * state.v);
+          + (Kx * xPos + Kv * state.v);
 
     if (F >  Fmax) F =  Fmax;
     if (F < -Fmax) F = -Fmax;

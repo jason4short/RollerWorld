@@ -21,7 +21,7 @@ export class NNController {
 	}
 
 	// Single-rate: no outer loop, the MLP replaces the whole cascade.
-	updateOuter() {}
+	updateVelocity() {}
 
 	produceForce(sensors, gains, dt, motor) {
 		if (!this.mlp) return 0;
@@ -32,10 +32,11 @@ export class NNController {
 		const dv = (sensors.v - this.last_v) / dt;
 		this.last_v = sensors.v;
 
+		const xPos = sensors.x_body ?? sensors.x;
 		const x = [
 			sensors.th           * this.inScale[0],
 			sensors.w            * this.inScale[1],
-			sensors.x            * this.inScale[2],
+			xPos                 * this.inScale[2],
 			sensors.v            * this.inScale[3],
 			this.target_angle    * this.inScale[4],
 			dv                   * this.inScale[5],

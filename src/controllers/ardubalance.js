@@ -4,7 +4,7 @@ import { PWMTable } from './pwm-table.js';
 //
 // Two loops at different rates:
 //
-//   OUTER (~100 Hz)   angle PD → commanded cart velocity (v_cmd)
+//   OUTER (~100 Hz)   angle PD → commanded cart velocity (vel_command)
 //                     plus a slow auto-trim on the IMU zero-offset
 //   INNER (~400 Hz)   speed PID + feed-forward → PWM → force
 //
@@ -20,7 +20,7 @@ export class ArduBalanceController {
 
   reset() {
     this.balance_offset = 0;   // learned IMU zero-offset (rad)
-    this.v_cmd          = 0;   // outer-loop output: commanded cart velocity (m/s)
+    this.vel_command    = 0;   // outer-loop output: commanded cart velocity (m/s)
     this.speed_I        = 0;   // inner integrator (m·s because err·dt)
     this.last_vmeas     = 0;   // for derivative-on-measurement in inner loop
     this.speed_d_lpf    = 0;   // low-passed derivative estimate
@@ -29,7 +29,7 @@ export class ArduBalanceController {
   // ------------------------------------------------------------------------
   // Outer angle loop — commands a cart velocity to catch the lean.
   // ------------------------------------------------------------------------
-  updateOuter(sensors, gains, dt) {
+  updateVelocity(sensors, gains, dt) {
     const { bal_P, bal_D, bal_I, p_vel } = gains;
 
     // Apply learned sensor offset so the controller sees "true" tilt.
@@ -43,6 +43,7 @@ export class ArduBalanceController {
     // leak toward zero so it can't drift off during transients.
     const quiet = Math.abs(this.target_angle) < 0.01
                && Math.abs(angle_err)       < 0.04;   // ~2.3°
+  
     if (quiet) this.balance_offset += bal_I * angle_err * dt;
     this.balance_offset *= (1 - dt / 60);   // ~60 s leak time constant
 
@@ -51,32 +52,32 @@ export class ArduBalanceController {
     // the same thing, probably by accident: its PID helper consumed gyro
     // directly as the rate input.)
     //
-    // Combined effect: v_cmd = PD(angle) + p_vel · v_measured.
+    // Combined effect: vel_command = PD(angle) + p_vel · v_measured.
     // See produceForce() for what the p_vel term actually controls.
-    this.v_cmd = bal_P * angle_err + bal_D * sensors.w + p_vel * sensors.v;
+    this.vel_command = bal_P * angle_err + bal_D * sensors.w + p_vel * sensors.v;
   }
 
   // ------------------------------------------------------------------------
-  // Inner speed loop — tracks v_cmd with PID + feed-forward.
+  // Inner speed loop — tracks vel_command with PID + feed-forward.
   // ------------------------------------------------------------------------
   produceForce(sensors, gains, dt, motor) {
     const { wheel_P, wheel_I, wheel_D, ff_per_mps, PWM_max, dead_zone } = gains;
 
-    // Substituting v_cmd's definition:
-    //   speed_err = v_cmd − v = bal_PD + (p_vel − 1) · v
+    // Substituting vel_command's definition:
+    //   speed_err = vel_command − v = bal_PD + (p_vel − 1) · v
     // So p_vel controls the inner loop's effective velocity coefficient:
     //   p_vel < 1  → net braking on wheel speed
     //   p_vel = 1  → neutral (pure angle tracking)
     //   p_vel > 1  → net boosting (amplifies outer-loop authority; must be
     //                matched by enough bal_P to stay stable)
-    const speed_err = this.v_cmd - sensors.v;
+    const speed_err = this.vel_command - sensors.v;
 
     // Integrator with anti-windup: stop accumulating while PWM is saturated.
     const saturated = this.lastPWM !== undefined
                    && Math.abs(this.lastPWM) >= PWM_max - 1;
     if (!saturated) this.speed_I += speed_err * dt;
 
-    // Derivative on measurement (not error) — no kick when v_cmd jumps.
+    // Derivative on measurement (not error) — no kick when vel_command jumps.
     // Low-passed because the sensor samples slower than the inner loop, so
     // raw Δv/dt has aliasing spikes at the sensor rate. Time constant ~20 ms
     // cleanly filters the 100 Hz sensor boundaries at 400 Hz inner rate.
@@ -90,7 +91,7 @@ export class ArduBalanceController {
     // (using ff_per_mps as the slope). The table steps over motor deadband
     // and handles the nonlinear top end, so the PID doesn't have to wind up.
     this.pwmTable.linearSlope = ff_per_mps;
-    const ff = this.pwmTable.pwmFromSpeed(this.v_cmd);
+    const ff = this.pwmTable.pwmFromSpeed(this.vel_command);
     let pwm = ff
             + wheel_P * speed_err
             + wheel_I * this.speed_I

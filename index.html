@@ -5,7 +5,9 @@
 <title>Roller — Balance Bot Sim</title>
 <style>
   :root { color-scheme: dark; }
-  body { margin: 0; font: 13px/1.4 system-ui, sans-serif; background:#111; color:#ddd; display:grid; grid-template-columns: 1fr 320px; gap: 12px; padding: 12px; }
+  html, body { height: 100%; overflow: hidden; }
+  body { margin: 0; font: 13px/1.4 system-ui, sans-serif; background:#111; color:#ddd; display:grid; grid-template-columns: 1fr 320px; gap: 12px; padding: 12px; box-sizing: border-box; overscroll-behavior: none; }
+  body > div { overflow-y: auto; min-height: 0; }
   h2 { margin: 0 0 6px; font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color:#8ab; }
   canvas { background:#0a0a0a; border:1px solid #222; display:block; width:100%; }
   .panel { background:#181818; border:1px solid #222; border-radius:6px; padding:10px; margin-bottom:10px; }
@@ -58,7 +60,7 @@
           </select>
         </label>
         <label>Hidden neurons   <input type="number" id="nnHidden" value="16"  step="1"  min="1" max="64"></label>
-        <label>Epochs           <input type="number" id="nnEpochs" value="300" step="25" min="10"></label>
+        <label>Epochs           <input type="number" id="nnEpochs" value="3000" step="25" min="10"></label>
         <label>Samples / epoch  <input type="number" id="nnSamples" value="1000" step="100" min="100"></label>
         <label>Learning rate    <input type="number" id="nnLR"     value="0.02" step="0.005"></label>
         <div class="row" style="margin-top:4px"><button id="btnTrainNN" class="warn">Train</button></div>
@@ -86,15 +88,46 @@
     </div>
     <div class="stat" id="stats" style="margin-top:6px"></div>
     <div style="margin-top:6px; color:#666; font-size:11px">
-      ←/→ lean · ↑/↓ shove (tip) · space pause · click world to set nav target
+      ↑/↓ drive · ←/→ turn · space pause · click world to set nav target
     </div>
     <label style="margin-top:6px">Shove strength (rad/s) <input type="number" id="shoveOmega" value="6" step="0.5"></label>
   </div>
 
   <details class="panel" open>
+    <summary>Yaw control</summary>
+    <label>Kyaw (N·m per rad/s) <input type="number" id="Kyaw"      value="4"   step="0.5"></label>
+    <label>Max yaw torque (N·m) <input type="number" id="MaxTauYaw" value="6"   step="0.5"></label>
+    <div style="margin-top:4px; color:#666; font-size:11px">
+      ←/→ holds set the yaw-rate setpoint.
+    </div>
+  </details>
+
+  <details class="panel" open>
+    <summary>Pilot (FBW)</summary>
+    <label>Mode
+      <select id="pilotMode">
+        <option value="fbw" selected>Fly-by-wire (joystick)</option>
+        <option value="raw">Raw tilt (arrow keys)</option>
+      </select>
+    </label>
+    <canvas id="joystick" width="240" height="240"
+      style="width:240px; height:240px; max-width:100%; aspect-ratio:1;
+             background:transparent; border:0; display:block;
+             margin:8px auto; touch-action:none"></canvas>
+    <div style="color:#666; font-size:11px; text-align:center">
+      ↑ forward · ↓ back · ←/→ yaw · release = active brake
+    </div>
+  </details>
+
+  <details class="panel" open>
     <summary>Navigation</summary>
     <label>Enable <input type="checkbox" id="navEnabled"></label>
     <label>Target x (m)  <input type="number" id="navTargetX" value="0" step="0.1"></label>
+    <label>Target z (m)  <input type="number" id="navTargetZ" value="0" step="0.1"></label>
+    <label>Heading Kp (rad/s per rad)  <input type="number" id="Kheading"   value="2"   step="0.2"></label>
+    <label>Max yaw rate (rad/s)        <input type="number" id="MaxYawRate" value="1.5" step="0.1"></label>
+    <label>Yaw disable radius (m)      <input type="number" id="yaw_disable_radius" value="0.2" step="0.05"></label>
+    <label>Yaw speed softness (m/s)    <input type="number" id="yaw_speed_softness" value="5.0" step="0.5"></label>
     <label>Mode
       <select id="navMode">
         <option value="profile" selected>√ braking profile</option>
@@ -143,6 +176,8 @@
     <label>Wheel inertia Iw <input type="number" id="Iw" value="0.02" step="0.001"></label>
     <label>Rolling friction <input type="number" id="cx" value="0.3" step="0.05"></label>
     <label>Pivot friction <input type="number" id="cp" value="0.005" step="0.005"></label>
+    <label>Yaw inertia I_yaw <input type="number" id="I_yaw" value="0.05"  step="0.01"></label>
+    <label>Yaw friction c_yaw <input type="number" id="c_yaw" value="0.2" step="0.05"></label>
     <label>Initial angle° <input type="number" id="th0" value="4" step="1"></label>
     <label>Noise (rad) <input type="number" id="noise" value="0" step="0.001"></label>
   </div>
@@ -217,7 +252,8 @@
 <script type="importmap">
 {
   "imports": {
-    "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
+    "three":          "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/":  "https://unpkg.com/three@0.160.0/examples/jsm/"
   }
 }
 </script>

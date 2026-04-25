@@ -64,7 +64,7 @@ export const PLOT_SIGNALS = {
 	pwm:          { label: 'Motor PWM (±max)',            scale: null },
 	pwm_nn:       { label: 'NN PWM shadow (±max)',        scale: null },
 	pwm_residual: { label: 'NN residual: actual − NN',    scale: null },
-	v_cmd:     { label: 'Balance v-command (±5)',   scale: 1 / 5 },
+	vel_command:     { label: 'Balance v-command (±5)',   scale: 1 / 5 },
 	v_desired: { label: 'Nav target velocity (±3)', scale: 1 / 3 },
 	err_x:     { label: 'Position error (±2 m)',    scale: 1 / 2 },
 	tilt_sp:   { label: 'Target tilt (±30°)',       scale: 1 / (Math.PI / 6) },
