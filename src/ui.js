@@ -197,6 +197,7 @@ export class UI {
     'wheelbase', 'force_P', 'force_I', 'force_I_max', 'deadband_extra',
     // disturbance
     'shoveOmega',
+    'disturbForceImpulse', 'disturbTauImpulse', 'disturbImuBias',
     // NN training
     'nnHidden', 'nnEpochs', 'nnSamples', 'nnLR',
   ];

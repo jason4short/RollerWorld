@@ -93,6 +93,28 @@
     <label style="margin-top:6px">Shove strength (rad/s) <input type="number" id="shoveOmega" value="6" step="0.5"></label>
   </div>
 
+  <details class="panel">
+    <summary>Disturbances — make life hard</summary>
+    <p style="font-size:11px; color:#888; margin: 0 0 6px 0">
+      Inject impulses or biases to test disturbance rejection. A recorded-mode NN
+      will fall here; a random-mode NN should recover.
+    </p>
+    <label>Force impulse (N·s)  <input type="number" id="disturbForceImpulse" value="3" step="0.5"></label>
+    <div class="row">
+      <button id="btnDisturbForward" class="alt">Push fwd</button>
+      <button id="btnDisturbBack"    class="alt">Push back</button>
+    </div>
+    <label style="margin-top:6px">Yaw impulse (N·m·s)  <input type="number" id="disturbTauImpulse" value="0.2" step="0.05"></label>
+    <div class="row">
+      <button id="btnDisturbYawL" class="alt">Yaw L</button>
+      <button id="btnDisturbYawR" class="alt">Yaw R</button>
+    </div>
+    <label style="margin-top:6px">IMU bias step (rad)  <input type="number" id="disturbImuBias" value="0.05" step="0.005"></label>
+    <div class="row">
+      <button id="btnDisturbBiasToggle" class="alt">Bias OFF</button>
+    </div>
+  </details>
+
   <details class="panel" open>
     <summary>Yaw control</summary>
     <label>Kyaw (N·m per rad/s) <input type="number" id="Kyaw"      value="4"   step="0.5"></label>

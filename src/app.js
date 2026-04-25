@@ -49,6 +49,11 @@ export class App {
 		this.yawController 		= new YawController();
 		this.stack 				= new ControllerStack();
 		this._lastStackOut		= null;
+
+		// Disturbance state — biases / impulses injected by the Disturbances
+		// panel. Impulses are applied as instantaneous state kicks; bias is
+		// added to the sensor pitch reading every tick while enabled.
+		this.imuBiasInjected = 0;
 		this.calibrator 		= new MotorCalibrator({ dt: this.DT });
 		const joyEl 			= document.getElementById('joystick');
 		this.joystick 			= joyEl ? new Joystick(joyEl) : null;
@@ -358,6 +363,11 @@ export class App {
 				this.dueSensor -= this.DT;
 				if (this.dueSensor <= 0 || this.measured === null) {
 					this.measured = this.sensors.sample(this.plant.state, params, sensorCfg, this.tSim);
+					// Inject IMU bias if the disturbance panel turned it on. The
+					// controller sees a tilted "upright" — its auto-trim should
+					// eventually absorb a real fixed bias; a step bias exposes
+					// the time constant.
+					if (this.imuBiasInjected !== 0) this.measured.pitch += this.imuBiasInjected;
 					this.dueSensor += dtSensor;
 				}
 
@@ -523,6 +533,37 @@ export class App {
 			const shove_rate = this.ui.num('shoveOmega');
 			this.plant.state.pitch_rate += shove_rate;
 			this.ui.log(this.tSim, `shove: +${shove_rate.toFixed(1)} rad/s tip`);
+		};
+
+		// Disturbances — instantaneous state kicks, plus a toggleable IMU bias.
+		// Force impulse → Δv = J / (M+m). Yaw impulse → Δω = J / I_yaw.
+		const pushChassis = sign => {
+			const J = sign * this.ui.num('disturbForceImpulse');
+			const m_total = this.plant.params.M + this.plant.params.m;
+			this.plant.state.vel_cart += J / m_total;
+			this.ui.log(this.tSim, `chassis push: ${J.toFixed(1)} N·s → Δv=${(J / m_total).toFixed(2)} m/s`);
+		};
+		const yawKick = sign => {
+			const J = sign * this.ui.num('disturbTauImpulse');
+			this.plant.state.yaw_rate += J / this.plant.params.I_yaw;
+			this.ui.log(this.tSim, `yaw kick: ${J.toFixed(2)} N·m·s`);
+		};
+		document.getElementById('btnDisturbForward').onclick = () => pushChassis(+1);
+		document.getElementById('btnDisturbBack').onclick    = () => pushChassis(-1);
+		document.getElementById('btnDisturbYawL').onclick    = () => yawKick(+1);
+		document.getElementById('btnDisturbYawR').onclick    = () => yawKick(-1);
+
+		const biasBtn = document.getElementById('btnDisturbBiasToggle');
+		biasBtn.onclick = () => {
+			if (this.imuBiasInjected !== 0) {
+				this.imuBiasInjected = 0;
+				biasBtn.textContent = 'Bias OFF';
+				this.ui.log(this.tSim, 'IMU bias cleared');
+			} else {
+				this.imuBiasInjected = this.ui.num('disturbImuBias');
+				biasBtn.textContent = `Bias ON (+${(this.imuBiasInjected * 180 / Math.PI).toFixed(1)}°)`;
+				this.ui.log(this.tSim, `IMU bias on: +${(this.imuBiasInjected * 180 / Math.PI).toFixed(1)}°`);
+			}
 		};
 
 		document.getElementById('btnExp').onclick = () => this.sweepKp();
