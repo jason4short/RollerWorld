@@ -102,62 +102,88 @@ export class WorldRenderer3D {
 	}
 
 	_buildBot() {
-		// Blocky tires — dark, low-poly cylinders.
-		const wheelMat = new THREE.MeshStandardMaterial({ color: 0x2a1f17, roughness: 1 });
-		const wheelGeom = new THREE.CylinderGeometry(1, 1, 0.08, 16);
+		// Wheels: solid black, oversized (visual scale ~1.5× the physics R) to
+		// give the kawaii proportions in the design — wheels about as tall as
+		// the body, with a single cream spoke for visible rotation.
+		this.WHEEL_VISUAL_SCALE = 1.5;
+		const wheelMat 		= new THREE.MeshStandardMaterial({ color: 0x000000, roughness: 0.9 });
+		const wheelGeom 	= new THREE.CylinderGeometry(1, 1, 0.05, 24);
 		wheelGeom.rotateX(Math.PI / 2);
 
-		this.wheelL = new THREE.Mesh(wheelGeom, wheelMat);
-		this.wheelR = new THREE.Mesh(wheelGeom.clone(), wheelMat.clone());
-		this.wheelL.castShadow = true;
-		this.wheelR.castShadow = true;
+		this.wheelL 			= new THREE.Mesh(wheelGeom, wheelMat);
+		this.wheelR 			= new THREE.Mesh(wheelGeom.clone(), wheelMat.clone());
+		this.wheelL.castShadow 	= true;
+		this.wheelR.castShadow 	= true;
 		this.bot.add(this.wheelL, this.wheelR);
 
-		// Cream hub on each wheel for visible rotation.
-		const hubMat = new THREE.MeshStandardMaterial({ color: 0xf2e6cf });
-		for (const wheel of [this.wheelL, this.wheelR]) {
-			const hub = new THREE.Mesh(
-				new THREE.CylinderGeometry(0.35, 0.35, 0.12, 12),
-				hubMat,
-			);
-			hub.rotation.x = Math.PI / 2;
-			wheel.add(hub);
-			// Single dark spoke so rotation is unambiguous.
-			const spoke = new THREE.Mesh(
-				new THREE.BoxGeometry(1.2, 0.06, 0.02),
-				new THREE.MeshStandardMaterial({ color: 0x1a1a1a }),
-			);
-			wheel.add(spoke);
-		}
+		// Cream pill spoke on each wheel — pinned to the OUTSIDE face so the
+		// pills face away from the body (left wheel's pill on -Z side, right
+		// wheel's pill on +Z side). Wheel cylinder thickness is 0.05, so the
+		// outer face sits at local z = ±0.025; nudge a hair past to avoid
+		// z-fighting with the wheel face.
+		const spokeGeom	 = new THREE.BoxGeometry(0.18, 0.6, 0.01);
+		const spokeMat	 = new THREE.MeshStandardMaterial({ color: 0xf2e6cf });
+		const outer_z    = 0.026;
 
-		// Body — pivots about Z (pitch). Children positioned for L-dependent geometry.
+		const spokeL = new THREE.Mesh(spokeGeom, spokeMat);
+		spokeL.position.set(0, 0.5, -outer_z);
+		this.wheelL.add(spokeL);
+
+		const spokeR = new THREE.Mesh(spokeGeom, spokeMat);
+		spokeR.position.set(0, 0.5,  outer_z);
+		this.wheelR.add(spokeR);
+
+		// Body group — pivots about Z (pitch).
 		this.body = new THREE.Group();
 		this.bot.add(this.body);
 
-		// Main chassis — a single red box. Bright accent against the orange world.
+		// Maroon chassis — thin front-to-back (X), wide between the wheels (Z),
+		// taller than either. Matches the kawaii proportions in the design.
 		this.stack = new THREE.Mesh(
-			new THREE.BoxGeometry(0.36, 0.22, 0.34),
-			new THREE.MeshStandardMaterial({ color: 0xcc3322, roughness: 0.6 }),
+			new THREE.BoxGeometry(0.16, 0.34, 0.36),
+			new THREE.MeshStandardMaterial({ color: 0xCC3322, roughness: 0.8 }),
 		);
 		this.stack.castShadow = true;
 		this.body.add(this.stack);
 
-		// Cab block on top — slightly smaller, cream colored.
-		this.deck = new THREE.Mesh(
-			new THREE.BoxGeometry(0.22, 0.16, 0.28),
+		// Darker base strip across the bottom of the chassis (front-view detail).
+		this.skirt = new THREE.Mesh(
+			new THREE.BoxGeometry(0.17, 0.05, 0.365),
+			new THREE.MeshStandardMaterial({ color: 0x4a1208, roughness: 0.9 }),
+		);
+		this.skirt.castShadow = true;
+		this.body.add(this.skirt);
+
+		// Cream head cap — slightly wider than the chassis, eyes face +X (forward).
+		this.deck = new THREE.Group();
+		const headW_x = 0.10;   // depth front-to-back
+		const headH_y = 0.10;
+		const headW_z = 0.30;   // width between the wheels
+		const head = new THREE.Mesh(
+			new THREE.BoxGeometry(headW_x, headH_y, headW_z),
 			new THREE.MeshStandardMaterial({ color: 0xf2e6cf, roughness: 0.7 }),
 		);
-		this.deck.castShadow = true;
+		head.castShadow = true;
+		this.deck.add(head);
+
+		// Two black dot eyes on the front face (+X).
+		const eyeMat  = new THREE.MeshStandardMaterial({ color: 0x000000 });
+		const eyeGeom = new THREE.SphereGeometry(0.022, 12, 12);
+		const eyeX    = headW_x / 2 + 0.001;   // just outside the front face
+		for (const dz of [-0.10, 0.10]) {
+			const eye = new THREE.Mesh(eyeGeom, eyeMat);
+			eye.position.set(eyeX, 0.005, dz);
+			this.deck.add(eye);
+		}
 		this.body.add(this.deck);
 
-		// Hidden CoM marker (kept for code reuse, but invisible in this style).
+		// Hidden CoM marker (kept for code reuse, invisible in this style).
 		this.com = new THREE.Mesh(
 			new THREE.SphereGeometry(0.02, 8, 8),
 			new THREE.MeshBasicMaterial({ visible: false }),
 		);
 		this.body.add(this.com);
 
-		// Empty rails array — kept so draw() doesn't blow up; no visible rails.
 		this.rails = [];
 	}
 
@@ -226,32 +252,40 @@ export class WorldRenderer3D {
 	draw(state, params, navTarget = null, queueRest = []) {
 		const { L, R } = params;
 
-		// Wheels — scale for current radius, position at axle height.
-		this.wheelL.scale.set(R, R, 1);
-		this.wheelR.scale.set(R, R, 1);
-		this.wheelL.position.set(0, R, -0.16);
-		this.wheelR.position.set(0, R, 0.16);
+		// Wheels — visually larger than the physics R for the kawaii look,
+		// but rolling rotation still uses true R so the sim stays consistent.
+		const Rv = R * this.WHEEL_VISUAL_SCALE;
+		this.wheelL.scale.set(Rv, Rv, 1);
+		this.wheelR.scale.set(Rv, Rv, 1);
+		this.wheelL.position.set(0, Rv, -0.24);
+		this.wheelR.position.set(0, Rv,  0.24);
 
-		// Wheel rotation about its own (now-Z) spin axis.
-		// Forward (+x) motion → CW from +Z view → negative rotation about Z.
-		this.wheelL.rotation.z = -state.x / R;
-		this.wheelR.rotation.z = -state.x / R;
+		// Wheel rotation comes straight from the sim — pendulum integrates
+		// per-wheel angle from the differential-drive kinematics, so this is
+		// the actual angular position of each wheel, not an estimate.
+		this.wheelL.rotation.z = -state.wheel_left_angle;
+		this.wheelR.rotation.z = -state.wheel_right_angle;
 
 		// Body pivots at axle height. Update L-dependent positions/scales.
-		this.body.position.set(0, R, 0);
-		// +θ in our convention = bob toward +x. In three.js, that's a negative
-		// rotation about Z (positive Z-rot would take bob toward -x).
-		this.body.rotation.z = -state.th;
+		this.body.position.set(0, Rv, 0);
+		// +pitch in our convention = bob toward +x. In three.js, that's a
+		// negative rotation about Z (positive Z-rot would take bob toward -x).
+		this.body.rotation.z = -state.pitch;
 
-		// Stack/cab positions scale loosely with L so taller bots look taller.
-		// Chassis at half-L, cab on top of it, no rails in the blocky style.
-		this.stack.position.y = L * 0.55;
-		this.deck.position.y  = L * 0.55 + 0.18;
+		// Body proportions: chassis sits with its base at axle height; the
+		// head cap sits on top of the chassis. Skirt is a thin dark strip at
+		// the very bottom of the chassis.
+		const chassisH = 0.34;
+		const headH    = 0.14;
+		const skirtH   = 0.05;
+		this.stack.position.y = chassisH / 2;
+		this.skirt.position.y = skirtH / 2;
+		this.deck.position.y  = chassisH + headH / 2;
 		this.com.position.y   = L;
 
 		// Bot world position + heading
 		this.bot.position.set(state.x, 0, state.z);
-		this.bot.rotation.y = state.psi;
+		this.bot.rotation.y = state.heading;
 
 		// Nav target flag (2D position on the ground). Bob + spin so it
 		// reads as "go here" not just another course marker.

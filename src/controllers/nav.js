@@ -25,11 +25,11 @@ export class NavController {
 		this.v_lpf     = 0;
 		this.mode      = 'profile';   // 'pd' | 'profile'
 		// Diagnostic state (exposed for plotting)
-		this.err_last         = 0;    // signed projected distance
-		this.tilt_last        = 0;
-		this.yawRate_last     = 0;
-		this.heading_err_last = 0;
-		this.v_desired_last   = 0;
+		this.err_last           = 0;    // signed projected distance
+		this.tilt_last          = 0;
+		this.yaw_rate_last      = 0;
+		this.heading_err_last   = 0;
+		this.v_desired_last     = 0;
 	}
 
 	reset() { this.v_lpf = 0; this.v_desired_last = 0; }
@@ -48,9 +48,9 @@ export class NavController {
 
 	update(sensors, gains, dt = 1 / 60) {
 		// LPF the noisy encoder velocity for damping use.
-		const tau   = 0.1;
-		const alpha = dt / (tau + dt);
-		this.v_lpf  = (1 - alpha) * this.v_lpf + alpha * sensors.v;
+		const time_constant = 0.1;
+		const alpha         = dt / (time_constant + dt);
+		this.v_lpf          = (1 - alpha) * this.v_lpf + alpha * sensors.v;
 
 		// World-frame error to target.
 		const dx = this.target_x - sensors.x;
@@ -60,24 +60,15 @@ export class NavController {
 		// Project onto bot's forward axis — signed (positive ahead, negative
 		// behind). This lets the bot reverse for small overshoots instead of
 		// pirouetting 180°.
-		const projected = dx * Math.cos(sensors.psi) - dz * Math.sin(sensors.psi);
+		const projected = dx * Math.cos(sensors.heading) - dz * Math.sin(sensors.heading);
 		this.err_last = projected;
 
-		// Alignment to the bot-target line. The bot can drive forward OR
-		// backward along that line, so we want yaw to align to whichever
-		// orientation is closer — facing the target, OR facing 180° away
-		// from it. With this, an overshoot becomes a small backward drive
-		// (zero yaw), not a 180° pirouette.
+		// Always face the target — no reverse-driving shortcut. Bot rotates
+		// the full way around if needed instead of backing up.
 		const target_heading = Math.atan2(-dz, dx);
-		let heading_err = target_heading - sensors.psi;
+		let heading_err = target_heading - sensors.heading;
 		while (heading_err >  Math.PI) heading_err -= 2 * Math.PI;
 		while (heading_err < -Math.PI) heading_err += 2 * Math.PI;
-		// If aligning to target_heading is more than 90° away, flip — aligning
-		// to target_heading + π is closer (and the projection-based drive
-		// will then naturally command negative body velocity to reverse
-		// toward the target).
-		if (heading_err >  Math.PI / 2) heading_err -= Math.PI;
-		if (heading_err < -Math.PI / 2) heading_err += Math.PI;
 		this.heading_err_last = heading_err;
 
 		// --- Yaw command --------------------------------------------------
@@ -88,24 +79,31 @@ export class NavController {
 		const { Kheading = 2, MaxYawRate = 1.5, yaw_disable_radius = 0.2 } = gains;
 		const radius_scale = Math.min(1, Math.max(0,
 			(distance_2d - yaw_disable_radius) / yaw_disable_radius));
-		let yawRate = Kheading * heading_err * radius_scale;
-		if (yawRate >  MaxYawRate) yawRate =  MaxYawRate;
-		if (yawRate < -MaxYawRate) yawRate = -MaxYawRate;
-		this.yawRate_last = yawRate;
+		let yaw_rate = Kheading * heading_err * radius_scale;
+		if (yaw_rate >  MaxYawRate) yaw_rate =  MaxYawRate;
+		if (yaw_rate < -MaxYawRate) yaw_rate = -MaxYawRate;
+		this.yaw_rate_last = yaw_rate;
 
 		// --- Drive command ------------------------------------------------
 		// Body-frame velocity setpoint comes from the signed projection of
 		// the world error onto the bot's forward axis — positive ahead,
 		// negative behind. With heading_err bounded to ±90° (above), this
 		// projection's sign is now well-behaved during rotation.
+		// Only drive forward when roughly aligned with the target. Outside
+		// ±90°, hold velocity at zero and let the yaw loop rotate in place.
+		// Within ±90°, soften by cos(heading_err) so the drive ramps up as
+		// the bot completes the turn — no jolt at the alignment boundary.
 		let v_target;
 		if (distance_2d < yaw_disable_radius) {
-			// "Arrived" — brake to zero, don't chase further.
 			v_target = 0;
-		} else if (this.mode === 'profile') {
-			v_target = this._profileSpeed(projected, gains);
+		} else if (Math.abs(heading_err) > Math.PI / 2) {
+			v_target = 0;
 		} else {
-			v_target = this._pdSpeed(projected, gains);
+			const align = Math.cos(heading_err);
+			const raw = this.mode === 'profile'
+				? this._profileSpeed(distance_2d, gains)
+				: this._pdSpeed(distance_2d, gains);
+			v_target = Math.max(0, align * raw);
 		}
 		const v_desired = this._slewVDesired(v_target, gains, dt);
 		this.v_desired_last = v_desired;
@@ -116,16 +114,16 @@ export class NavController {
 		if (tilt < -lim) tilt = -lim;
 		this.tilt_last = tilt;
 
-		return { tilt, yawRate };
+		return { tilt, yaw_rate };
 	}
 
 	// Fly-by-wire: pilot stick directly sets the body-frame velocity setpoint
 	// and yaw rate. The same v_lpf / Kvel inner-loop math from update() runs,
 	// so centering the stick brakes hard via `Kvel * (0 - v_lpf)`.
 	updateFbw(sensors, stick, gains, dt = 1 / 60) {
-		const tau	= 0.1;
-		const alpha	= dt / (tau + dt);
-		this.v_lpf	= (1 - alpha) * this.v_lpf + alpha * sensors.v;
+		const time_constant = 0.1;
+		const alpha         = dt / (time_constant + dt);
+		this.v_lpf          = (1 - alpha) * this.v_lpf + alpha * sensors.v;
 
 		const v_target			= (stick.fwd ?? 0) * gains.v_max;
 		const v_desired			= this._slewVDesired(v_target, gains, dt);
@@ -139,13 +137,13 @@ export class NavController {
 		if (tilt < -lim) tilt = -lim;
 		this.tilt_last = tilt;
 
-		const maxYaw	= gains.MaxYawRate;
-		let yawRate		= (stick.yaw ?? 0) * maxYaw;
-		if (yawRate >  maxYaw) yawRate =  maxYaw;
-		if (yawRate < -maxYaw) yawRate = -maxYaw;
-		this.yawRate_last = yawRate;
+		const max_yaw	= gains.MaxYawRate;
+		let yaw_rate	= (stick.yaw ?? 0) * max_yaw;
+		if (yaw_rate >  max_yaw) yaw_rate =  max_yaw;
+		if (yaw_rate < -max_yaw) yaw_rate = -max_yaw;
+		this.yaw_rate_last = yaw_rate;
 
-		return { tilt, yawRate };
+		return { tilt, yaw_rate };
 	}
 
 	_pdSpeed(projected, gains) {
