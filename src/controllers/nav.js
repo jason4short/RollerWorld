@@ -22,25 +22,25 @@ export class NavController {
 	constructor() {
 		this.target_x  = 0;
 		this.target_z  = 0;
-		this.v_lpf     = 0;
+		this.vel_lpf     = 0;
 		this.mode      = 'profile';   // 'pd' | 'profile'
 		// Diagnostic state (exposed for plotting)
 		this.err_last           = 0;    // signed projected distance
 		this.tilt_last          = 0;
 		this.yaw_rate_last      = 0;
 		this.heading_err_last   = 0;
-		this.v_desired_last     = 0;
+		this.vel_desired_last     = 0;
 	}
 
-	reset() { this.v_lpf = 0; this.v_desired_last = 0; }
+	reset() { this.vel_lpf = 0; this.vel_desired_last = 0; }
 
-	// Rate-limit v_desired by a_max so a step nav input (clicked target,
+	// Rate-limit vel_desired by a_max so a step nav input (clicked target,
 	// stick yank, "arrived" branch zeroing) doesn't propagate as a step
 	// into the pitch controller's target_angle. The bot can't physically
 	// accelerate faster than a_max anyway — this just stops asking it to.
-	_slewVDesired(target, gains, dt) {
+	_slewVelDesired(target, gains, dt) {
 		const dv_max	= (gains.a_max ?? 1.5) * dt;
-		const prev		= this.v_desired_last ?? 0;
+		const prev		= this.vel_desired_last ?? 0;
 		if (target > prev + dv_max) return prev + dv_max;
 		if (target < prev - dv_max) return prev - dv_max;
 		return target;
@@ -50,7 +50,7 @@ export class NavController {
 		// LPF the noisy encoder velocity for damping use.
 		const time_constant = 0.1;
 		const alpha         = dt / (time_constant + dt);
-		this.v_lpf          = (1 - alpha) * this.v_lpf + alpha * sensors.v;
+		this.vel_lpf          = (1 - alpha) * this.vel_lpf + alpha * sensors.vel_cart;
 
 		// World-frame error to target.
 		const dx = this.target_x - sensors.x;
@@ -93,21 +93,21 @@ export class NavController {
 		// ±90°, hold velocity at zero and let the yaw loop rotate in place.
 		// Within ±90°, soften by cos(heading_err) so the drive ramps up as
 		// the bot completes the turn — no jolt at the alignment boundary.
-		let v_target;
+		let vel_target;
 		if (distance_2d < yaw_disable_radius) {
-			v_target = 0;
+			vel_target = 0;
 		} else if (Math.abs(heading_err) > Math.PI / 2) {
-			v_target = 0;
+			vel_target = 0;
 		} else {
 			const align = Math.cos(heading_err);
 			const raw = this.mode === 'profile'
 				? this._profileSpeed(distance_2d, gains)
 				: this._pdSpeed(distance_2d, gains);
-			v_target = Math.max(0, align * raw);
+			vel_target = Math.max(0, align * raw);
 		}
-		const v_desired = this._slewVDesired(v_target, gains, dt);
-		this.v_desired_last = v_desired;
-		let tilt = gains.Kvel * (v_desired - this.v_lpf);
+		const vel_desired = this._slewVelDesired(vel_target, gains, dt);
+		this.vel_desired_last = vel_desired;
+		let tilt = gains.Kvel * (vel_desired - this.vel_lpf);
 
 		const lim = gains.tiltLimit;
 		if (tilt >  lim) tilt =  lim;
@@ -118,20 +118,20 @@ export class NavController {
 	}
 
 	// Fly-by-wire: pilot stick directly sets the body-frame velocity setpoint
-	// and yaw rate. The same v_lpf / Kvel inner-loop math from update() runs,
-	// so centering the stick brakes hard via `Kvel * (0 - v_lpf)`.
+	// and yaw rate. The same vel_lpf / Kvel inner-loop math from update() runs,
+	// so centering the stick brakes hard via `Kvel * (0 - vel_lpf)`.
 	updateFbw(sensors, stick, gains, dt = 1 / 60) {
 		const time_constant = 0.1;
 		const alpha         = dt / (time_constant + dt);
-		this.v_lpf          = (1 - alpha) * this.v_lpf + alpha * sensors.v;
+		this.vel_lpf          = (1 - alpha) * this.vel_lpf + alpha * sensors.vel_cart;
 
-		const v_target			= (stick.fwd ?? 0) * gains.v_max;
-		const v_desired			= this._slewVDesired(v_target, gains, dt);
-		this.v_desired_last		= v_desired;
+		const vel_target			= (stick.fwd ?? 0) * gains.v_max;
+		const vel_desired			= this._slewVelDesired(vel_target, gains, dt);
+		this.vel_desired_last		= vel_desired;
 		this.err_last			= 0;
 		this.heading_err_last	= 0;
 
-		let tilt = gains.Kvel * (v_desired - this.v_lpf);
+		let tilt = gains.Kvel * (vel_desired - this.vel_lpf);
 		const lim = gains.tiltLimit;
 		if (tilt >  lim) tilt =  lim;
 		if (tilt < -lim) tilt = -lim;
@@ -156,7 +156,7 @@ export class NavController {
 		const { v_max, a_max, linear_zone, lookahead } = gains;
 		// Lookahead in the direction of motion (subtract velocity·lookahead so
 		// we start braking earlier given current speed).
-		const eff = projected - this.v_lpf * lookahead;
+		const eff = projected - this.vel_lpf * lookahead;
 		const absErr = Math.abs(eff);
 		let v_brake;
 		if (absErr > linear_zone) {

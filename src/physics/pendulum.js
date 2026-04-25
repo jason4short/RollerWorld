@@ -27,7 +27,7 @@ export class Pendulum {
 		// params: {M, m, L, R, Iw, cx, cp, I_yaw, c_yaw}
 		this.params = params;
 		this.state  = {
-			x: 0, z: 0, v: 0,
+			x: 0, z: 0, vel_cart: 0,
 			pitch: 0, pitch_rate: 0,
 			heading: 0, yaw_rate: 0,
 			// Per-wheel rotation angles (radians), integrated from the
@@ -47,36 +47,36 @@ export class Pendulum {
 	derivs(s, F, yaw_torque) {
 		const { M, m, L, R, Iw, cx, cp, I_yaw, c_yaw } = this.params;
 
-		// Pitch dynamics — v is body-frame forward velocity, F is body-frame
-		// forward force from the pitch controller.
+		// Pitch dynamics — vel_cart is body-frame forward velocity, F is the
+		// body-frame forward force on the chassis from the wheel motors.
 		const sn = Math.sin(s.pitch), cs = Math.cos(s.pitch);
 		const Meff = M + (Iw / (R * R));
 		const D = Meff + m * sn * sn;
-		const b1 = F + m * L * s.pitch_rate * s.pitch_rate * sn - cx * s.v;
+		const b1 = F + m * L * s.pitch_rate * s.pitch_rate * sn - cx * s.vel_cart;
 		const b2 = G * sn - (F * R) / (m * L) - (cp * s.pitch_rate) / (m * L * L);
-		const v_dot          = (b1 - m * cs * b2) / D;
+		const vel_cart_dot   = (b1 - m * cs * b2) / D;
 		const pitch_rate_dot = (-cs * b1 + (Meff + m) * b2) / (L * D);
 
 		// Yaw dynamics — simple rigid-body rotation, decoupled from pitch.
 		const yaw_rate_dot = (yaw_torque - c_yaw * s.yaw_rate) / I_yaw;
 
-		// Differential-drive wheel kinematics. Forward speed v plus a yaw
-		// component on each side: outer wheel travels (v + yaw_rate·d/2),
-		// inner wheel (v − yaw_rate·d/2). Right wheel is the outer one when
-		// yaw_rate is positive (CCW from above = left turn).
+		// Differential-drive wheel kinematics. Forward speed vel_cart plus a
+		// yaw component on each side: outer wheel travels (vel_cart + yaw_rate·d/2),
+		// inner wheel (vel_cart − yaw_rate·d/2). Right wheel is the outer one
+		// when yaw_rate is positive (CCW from above = left turn).
 		const half_wheelbase     = this.wheelbase() / 2;
-		const wheel_left_dot     = (s.v - s.yaw_rate * half_wheelbase) / R;
-		const wheel_right_dot    = (s.v + s.yaw_rate * half_wheelbase) / R;
+		const wheel_left_dot     = (s.vel_cart - s.yaw_rate * half_wheelbase) / R;
+		const wheel_right_dot    = (s.vel_cart + s.yaw_rate * half_wheelbase) / R;
 
-		// World-frame motion derived from body-frame v and heading.
+		// World-frame motion derived from body-frame vel_cart and heading.
 		// three.js's mesh.rotation.y = heading rotates the local +X axis to
 		// (cos heading, 0, -sin heading) in world space, so we use the
 		// matching sign convention for position derivatives. With this,
 		// positive yaw rate turns the bot CCW as viewed from +Y (looking down).
 		return {
-			x:                 s.v * Math.cos(s.heading),
-			z:                -s.v * Math.sin(s.heading),
-			v:                 v_dot,
+			x:                 s.vel_cart * Math.cos(s.heading),
+			z:                -s.vel_cart * Math.sin(s.heading),
+			vel_cart:          vel_cart_dot,
 			pitch:             s.pitch_rate,
 			pitch_rate:        pitch_rate_dot,
 			heading:           s.yaw_rate,

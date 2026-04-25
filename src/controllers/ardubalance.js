@@ -22,7 +22,7 @@ export class ArduBalanceController {
     this.balance_offset = 0;   // learned IMU zero-offset (rad)
     this.vel_command    = 0;   // outer-loop output: commanded cart velocity (m/s)
     this.speed_I        = 0;   // inner integrator (m·s because err·dt)
-    this.last_vmeas     = 0;   // for derivative-on-measurement in inner loop
+    this.last_vel_cart_meas     = 0;   // for derivative-on-measurement in inner loop
     this.speed_d_lpf    = 0;   // low-passed derivative estimate
   }
 
@@ -54,7 +54,7 @@ export class ArduBalanceController {
     //
     // Combined effect: vel_command = PD(angle) + p_vel · v_measured.
     // See produceForce() for what the p_vel term actually controls.
-    this.vel_command = bal_P * angle_err + bal_D * sensors.pitch_rate + p_vel * sensors.v;
+    this.vel_command = bal_P * angle_err + bal_D * sensors.pitch_rate + p_vel * sensors.vel_cart;
   }
 
   // ------------------------------------------------------------------------
@@ -70,7 +70,7 @@ export class ArduBalanceController {
     //   p_vel = 1  → neutral (pure angle tracking)
     //   p_vel > 1  → net boosting (amplifies outer-loop authority; must be
     //                matched by enough bal_P to stay stable)
-    const speed_err = this.vel_command - sensors.v;
+    const speed_err = this.vel_command - sensors.vel_cart;
 
     // Integrator with anti-windup: stop accumulating while PWM is saturated.
     const saturated = this.lastPWM !== undefined
@@ -81,8 +81,8 @@ export class ArduBalanceController {
     // Low-passed because the sensor samples slower than the inner loop, so
     // raw Δv/dt has aliasing spikes at the sensor rate. Time constant ~20 ms
     // cleanly filters the 100 Hz sensor boundaries at 400 Hz inner rate.
-    const raw_d = -(sensors.v - this.last_vmeas) / dt;
-    this.last_vmeas = sensors.v;
+    const raw_d = -(sensors.vel_cart - this.last_vel_cart_meas) / dt;
+    this.last_vel_cart_meas = sensors.vel_cart;
     const time_constant = 0.02;
     const alpha = dt / (time_constant + dt);
     this.speed_d_lpf = (1 - alpha) * this.speed_d_lpf + alpha * raw_d;
@@ -105,6 +105,6 @@ export class ArduBalanceController {
 
     pwm = Math.max(-PWM_max, Math.min(PWM_max, pwm));
     this.lastPWM = pwm;
-    return motor.forceFromPWM(pwm, sensors.v);
+    return motor.forceFromPWM(pwm, sensors.vel_cart);
   }
 }

@@ -130,7 +130,7 @@ export class App {
 		const { th0 } = this.ui.readInit();
 		this.plant.params = this.ui.readParams();
 		this.plant.setState({
-			x: 0, z: 0, v: 0,
+			x: 0, z: 0, vel_cart: 0,
 			pitch: th0 * Math.PI / 180, pitch_rate: 0,
 			heading: 0, yaw_rate: 0,
 		});
@@ -169,7 +169,7 @@ export class App {
 
 	populatePlotMenus() {
 		const keys = Object.keys(PLOT_SIGNALS);
-		const defaults = ['pitch', 'v', 'v_desired'];	 // sensible for nav debugging
+		const defaults = ['pitch', 'vel_cart', 'vel_desired'];	 // sensible for nav debugging
 		for (let i = 0; i < 3; i++) {
 			const sel = document.getElementById(`plot${i + 1}`);
 			sel.innerHTML = '<option value="none">(none)</option>' +
@@ -226,7 +226,7 @@ export class App {
 			
 			
 			// Input priority: FBW pilot (joystick) > nav waypoint > raw arrow tilt.
-			// FBW reuses nav.js's v_lpf/Kvel braking math but takes its v_desired
+			// FBW reuses nav.js's vel_lpf/Kvel braking math but takes its vel_desired
 			// directly from the stick, so centering the stick brakes hard.
 			const pilotMode = this.ui.readPilotMode();
 			let tiltSetpoint, yawRateSetpoint;
@@ -259,7 +259,7 @@ export class App {
 			} else if (controller instanceof NNController) {
 				// NN swallows the velocity-tracking step; it takes vel_cart_target
 				// (post-slew) directly from nav rather than a tilt setpoint.
-				controller.vel_cart_target = this.nav.v_desired_last ?? 0;
+				controller.vel_cart_target = this.nav.vel_desired_last ?? 0;
 			}
 
 			const dtSensor = 1 / Math.max(1, rates.sensorHz);
@@ -302,7 +302,7 @@ export class App {
 					// regardless of which controller is driving. Lets us plot what
 					// the NN would say alongside what the active controller said.
 					if (this.controllers.nn.mlp && controller !== this.controllers.nn) {
-						this.controllers.nn.vel_cart_target = this.nav.v_desired_last ?? 0;
+						this.controllers.nn.vel_cart_target = this.nav.vel_desired_last ?? 0;
 						this.controllers.nn.produceForce(measInner, gains, dtInner, this.motor);
 					}
 
@@ -314,8 +314,8 @@ export class App {
 						this.recorder.record({
 							pitch:           this.measured.pitch,
 							pitch_rate:      this.measured.pitch_rate,
-							vel_cart:        this.measured.v,
-							vel_cart_target: this.nav.v_desired_last ?? 0,
+							vel_cart:        this.measured.vel_cart,
+							vel_cart_target: this.nav.vel_desired_last ?? 0,
 							pwm:             controller.lastPWM ?? 0,
 						});
 					}
@@ -328,14 +328,14 @@ export class App {
 				const cs = Math.cos(this.plant.state.pitch);
 				const sn = Math.sin(this.plant.state.pitch);
 				const x_CoM_true = this.plant.state.x + params.L * sn;
-				const v_CoM_true = this.plant.state.v + params.L * cs * this.plant.state.pitch_rate;
+				const v_CoM_true = this.plant.state.vel_cart + params.L * cs * this.plant.state.pitch_rate;
 
 				this.history.push({
 					t:				this.tSim,
 					pitch:			this.plant.state.pitch,
 					pitch_rate:		this.plant.state.pitch_rate,
 					x:				this.plant.state.x,
-					v:				this.plant.state.v,
+					vel_cart:		this.plant.state.vel_cart,
 					x_CoM:			x_CoM_true,
 					v_CoM:			v_CoM_true,
 					F:		 		this.lastForce,
@@ -349,7 +349,7 @@ export class App {
 										- (this.controllers.nn.lastPWM ?? 0),
 					// vel_command only exists in ArduBalance — leave 0 otherwise.
 					vel_command:	this.controllers.ardubalance.vel_command ?? 0,
-					v_desired: 		this.nav.v_desired_last ?? 0,
+					vel_desired: 		this.nav.vel_desired_last ?? 0,
 					err_x:		 	this.nav.err_last ?? 0,
 					tilt_sp:	 	tiltSetpoint,
 				});

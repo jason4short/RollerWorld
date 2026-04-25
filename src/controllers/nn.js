@@ -36,7 +36,7 @@ export class NNController {
 	produceForce(sensors, gains, dt, motor) {
 		if (!this.mlp) return 0;
 
-		const vel_cart = sensors.v;
+		const vel_cart = sensors.vel_cart;
 		const x = [
 			sensors.pitch        * this.inScale[0],
 			sensors.pitch_rate   * this.inScale[1],
@@ -59,6 +59,6 @@ export class NNController {
 		if (pwm < -PM) pwm = -PM;
 		this.lastPWM       = pwm;
 		this.vel_cart_prev = vel_cart;
-		return motor.forceFromPWM(pwm, sensors.v);
+		return motor.forceFromPWM(pwm, sensors.vel_cart);
 	}
 }

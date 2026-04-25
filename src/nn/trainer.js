@@ -59,14 +59,14 @@ export class NNTrainer {
 		// teacher's wheel_D term contributes meaningfully. ArduBalance computes
 		// raw_d = -(v - last_vmeas)/dt, and uses the LPF'd version. Settle the
 		// LPF at raw_d so steady-state response is captured in one call.
-		ab.last_vmeas  = state.vel_cart_prev;
+		ab.last_vel_cart_meas = state.vel_cart_prev;
 		const raw_d    = -(state.vel_cart - state.vel_cart_prev) / dt;
 		ab.speed_d_lpf = raw_d;
 
 		const sensors = {
 			pitch:      state.pitch,
 			pitch_rate: state.pitch_rate,
-			v:          state.vel_cart,
+			vel_cart:   state.vel_cart,
 		};
 		ab.updateVelocity(sensors, gains, dt);
 		ab.produceForce(sensors, gains, dt, motor);

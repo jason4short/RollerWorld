@@ -39,7 +39,7 @@ export class Sensors {
 		const dt = now - this.lastTime;
 		let speed = this.lastSpeed;
 		if (dt > 1e-9) {
-			this.bodyDistance += plantState.v * dt;
+			this.bodyDistance += plantState.vel_cart * dt;
 			const ticks = Math.round((this.bodyDistance / circ) * cfg.ticks_per_rev);
 			const dTicks = ticks - this.lastTicks;
 			speed = (dTicks * circ / cfg.ticks_per_rev) / dt;
@@ -52,7 +52,7 @@ export class Sensors {
 		// drift in the sim yet; nav uses these for distance/heading to target).
 		const x = plantState.x;
 		const z = plantState.z;
-		const v = speed;   // body-frame velocity (encoder-quantized)
+		const vel_cart = speed;   // body-frame cart velocity (encoder-quantized)
 
 		const pitch      = plantState.pitch      + this._randn() * cfg.imu_noise;
 		const pitch_rate = plantState.pitch_rate + this._randn() * cfg.gyro_noise;
@@ -62,7 +62,7 @@ export class Sensors {
 		const cs = Math.cos(pitch);
 		const sn = Math.sin(pitch);
 		const x_CoM = x + L * sn;
-		const v_CoM = v + L * cs * pitch_rate;
+		const v_CoM = vel_cart + L * cs * pitch_rate;
 
 		const heading  = plantState.heading;
 		const yaw_rate = plantState.yaw_rate + this._randn() * cfg.gyro_noise;
@@ -73,6 +73,6 @@ export class Sensors {
 		// doesn't leave a stale world-x error pulling the bot over.
 		const x_body = this.bodyDistance;
 
-		return { x, v, pitch, pitch_rate, x_CoM, v_CoM, heading, yaw_rate, z, x_body };
+		return { x, vel_cart, pitch, pitch_rate, x_CoM, v_CoM, heading, yaw_rate, z, x_body };
 	}
 }

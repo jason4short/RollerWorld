@@ -35,7 +35,7 @@ export class PIDController {
     // that the controller can't reduce by leaning along the new heading.
     const x_pos = state.x_body ?? state.x;
     let F = (Kp * state.pitch + Kd * state.pitch_rate + Ki * this.pitch_integral)
-          + (Kx * x_pos + Kv * state.v);
+          + (Kx * x_pos + Kv * state.vel_cart);
 
     if (F >  Fmax) F =  Fmax;
     if (F < -Fmax) F = -Fmax;
