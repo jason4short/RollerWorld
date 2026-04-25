@@ -172,6 +172,91 @@ export class Obstacles {
 		return true;
 	}
 
+	// --- Arc helper ---------------------------------------------------------
+	// Approximates a circular arc with N straight wall segments. Each segment
+	// is a chord between adjacent samples on the arc, oriented along the
+	// chord (so the wall is tangent-ish to the circle). Used by loadTrack().
+	_addArc({ cx, cz, radius, theta0, theta1, segments, thickness = 0.15, color = 0xf2e6cf }) {
+		for (let i = 0; i < segments; i++) {
+			const t0 = theta0 + (theta1 - theta0) * (i)     / segments;
+			const t1 = theta0 + (theta1 - theta0) * (i + 1) / segments;
+			const x0 = cx + radius * Math.cos(t0);
+			const z0 = cz + radius * Math.sin(t0);
+			const x1 = cx + radius * Math.cos(t1);
+			const z1 = cz + radius * Math.sin(t1);
+			const mx = (x0 + x1) / 2;
+			const mz = (z0 + z1) / 2;
+			const dx = x1 - x0;
+			const dz = z1 - z0;
+			// Tiny chord-length overshoot so adjacent segments overlap and
+			// don't leave a hairline gap that lidar rays can sneak through.
+			const length = Math.hypot(dx, dz) * 1.05;
+			// three.js rotation.y rotates local +x to world (cos y, -sin y),
+			// so to align the wall's long axis with the chord (dx, dz) we
+			// need yaw = atan2(-dz, dx), not atan2(dz, dx).
+			const yaw = Math.atan2(-dz, dx);
+			this.addWall({ x: mx, z: mz, length, thickness, yaw, color });
+		}
+	}
+
+	// --- Race track ---------------------------------------------------------
+	// Stadium-oval corridor with a section of pillars on the far straight.
+	// Built for the reactive lidar pilot: the bot follows the corridor walls
+	// like a road, then has to weave through the pillar field on the back
+	// straight. Bot spawns at (0, 0) heading +x, driving CCW.
+	//
+	// Geometry (top-down):
+	//
+	//                ╭───────────────────────╮      ← outer top    z = +6.75
+	//                │  ▪    ▪    ▪    ▪    │      ← pillar field
+	//                │ ╭───────────────────╮ │      ← inner top    z = +4.25
+	//                │ │                   │ │
+	//                │ │      (inner)      │ │      corridor width 2.5 m
+	//                │ │                   │ │
+	//                │ ╰───────────────────╯ │      ← inner bottom z = +1.25
+	//          start →                       ←      ← bot spawn at (0,0)
+	//                ╰───────────────────────╯      ← outer bottom z = -1.25
+	//                ↑                       ↑
+	//              x = -10                 x = +10
+	//
+	// Curves are approximated with chord segments via _addArc. Outer radius
+	// 4 m, inner radius 1.5 m → 2.5 m corridor on the curves too.
+	loadTrack() {
+		this.clear();
+		const wt = 0.15;     // wall thickness
+
+		// Straights — outer.
+		this.addWall({ x: 0, z: -1.25, length: 12.0, thickness: wt, yaw: 0 });
+		this.addWall({ x: 0, z:  6.75, length: 12.0, thickness: wt, yaw: 0 });
+		// Straights — inner.
+		this.addWall({ x: 0, z:  1.25, length: 10.0, thickness: wt, yaw: 0 });
+		this.addWall({ x: 0, z:  4.25, length: 10.0, thickness: wt, yaw: 0 });
+
+		// Right end-cap. Outer arc center (6, 2.75) r=4; inner arc center (5, 2.75) r=1.5.
+		this._addArc({ cx: 6, cz: 2.75, radius: 4,   theta0: -Math.PI / 2, theta1:  Math.PI / 2, segments: 14 });
+		this._addArc({ cx: 5, cz: 2.75, radius: 1.5, theta0: -Math.PI / 2, theta1:  Math.PI / 2, segments:  8 });
+
+		// Left end-cap. Mirror of the right.
+		this._addArc({ cx: -6, cz: 2.75, radius: 4,   theta0:  Math.PI / 2, theta1:  3 * Math.PI / 2, segments: 14 });
+		this._addArc({ cx: -5, cz: 2.75, radius: 1.5, theta0:  Math.PI / 2, theta1:  3 * Math.PI / 2, segments:  8 });
+
+		// Pillar field — four short fat walls in the top straight, alternating
+		// sides of the corridor centerline (z=5.5) so the bot has to weave.
+		// Small enough (0.4 × 0.4) that 2.5 m corridor still has plenty of
+		// passage on either side.
+		const pillar = (x, z) => this.addWall({
+			x, z, length: 0.4, thickness: 0.4, yaw: 0, color: 0xcc3322,
+		});
+		pillar(-3, 4.9);
+		pillar(-1, 6.1);
+		pillar( 1, 4.9);
+		pillar( 3, 6.1);
+
+		// Start/finish flags at the bot's spawn.
+		this.addFlag({ x: 0, z: -0.6, color: 0x44ff66 });
+		this.addFlag({ x: 0, z:  0.6, color: 0x44ff66 });
+	}
+
 	// --- A demo course ------------------------------------------------------
 	// Serpentine maze. Bot starts at (0, 0); finish at the far end. Four
 	// vertical walls alternately block the top and bottom half-corridor,

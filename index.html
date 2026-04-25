@@ -47,14 +47,20 @@
       <button id="btnPush" class="alt">Shove</button>
       <button id="btnCamFollow" class="alt active"
         title="Auto-recenter camera behind the bot after a brief idle. Click to keep your free orbit pose.">Cam ⟳</button>
-      <button id="btnLidar" class="alt active"
-        title="Show the bot's raycast perception of nearby walls. Visualization only — no controller consumes the ranges yet.">Lidar</button>
+      <button id="btnLidar" class="alt"
+        title="Show the bot's lidar rays. Lidar runs when the Lidar A* planner OR the Road pilot is active.">Lidar</button>
+      <button id="btnMapGrid" class="alt active"
+        title="Show the bot's accumulating occupancy-grid map. Only populated when the Lidar A* planner is active.">Map</button>
+      <button id="btnRoadAlgo" class="alt"
+        title="Reactive lidar pilot algorithm: WSum (weighted-sum steering) or FTG (Follow-the-Gap). Only matters in Road pilot mode.">WSum</button>
     </div>
     <div id="pilotButtons" style="position:absolute; right:10px; top:10px; display:flex; gap:6px">
       <button id="btnPilotAngle" class="alt" title="Raw tilt — arrow keys drive pitch_target directly">Angle</button>
       <button id="btnPilotFbw"   class="alt" title="Fly-by-wire — joystick drives velocity">FBW</button>
       <button id="btnPilotAuto"  class="alt" disabled
         title="Auto engages when waypoints are queued (shift+click world). Disengages when the queue empties.">Auto</button>
+      <button id="btnPilotRoad"  class="alt"
+        title="Reactive lidar pilot — follows corridor walls and weaves around obstacles using only the live lidar scan. No map, no waypoints.">Road</button>
     </div>
     <!-- Hidden mode select: source of truth for pilotMode, driven by the
          buttons above and shift+click on the world. Kept in the DOM so
@@ -63,6 +69,7 @@
       <option value="fbw" selected>Fly-by-wire</option>
       <option value="auto">Auto</option>
       <option value="raw">Raw tilt</option>
+      <option value="road">Road</option>
     </select>
     <canvas id="joystick" width="144" height="144"
       style="position:absolute; right:10px; bottom:10px;

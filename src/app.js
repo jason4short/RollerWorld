@@ -6,6 +6,7 @@ import { OccupancyGrid }				 from './world/occupancy_grid.js';
 import { PIDController }				 from './controllers/pid.js';
 import { ArduBalanceController } from './controllers/ardubalance.js';
 import { NavController }				 from './controllers/nav.js';
+import { RoadController }				from './controllers/road.js';
 import { YawController }				 from './controllers/yaw.js';
 import { NNController }					from './controllers/nn.js';
 import { ControllerStack }				from './controllers/stack/index.js';
@@ -48,17 +49,21 @@ export class App {
 		this.nnTrainer 			= new NNTrainer();
 		this.controllerType 	= this.ui.readController();
 		this.nav 				= new NavController();
+		this.road				= new RoadController();
 		this.yawController 		= new YawController();
 		this.stack 				= new ControllerStack();
 		this._lastStackOut		= null;
 		this.planner			= new Planner();
 		this.lidar				= new Lidar({ rays: 24, maxRange: 5 });
-		this.lidarEnabled		= true;
+		// Lidar runs ONLY when the lidar_astar planner is active — that's the
+		// one consumer that needs it. The two flags below are pure viz toggles.
+		this.showLidarRays		= false;   // ray segments in the world
+		this.showMapGrid		= true;    // occupancy-grid overlay
 		// Occupancy grid built up from accumulated lidar scans. Sized to
 		// cover the demo course with margin; cell size 0.25m matches the
 		// planner's grid resolution.
 		this.occupancyGrid		= new OccupancyGrid({
-			originX: -5, originZ: -4, width: 25, height: 8, cellSize: 0.25,
+			originX: -12, originZ: -3, width: 24, height: 11, cellSize: 0.25,
 		});
 		this._lastReplanT		= 0;
 		this.currentTab			= 'control';   // 'control' | 'sim'
@@ -182,6 +187,7 @@ export class App {
 		this.dueInner		= 0;
 		this.tSim 			= 0;
 		this.history.length = 0;
+		this.renderer.clearTrail?.();
 		this.render();
 	}
 
@@ -199,29 +205,17 @@ export class App {
 			? [{ x: this.plant.state.x, z: this.plant.state.z ?? 0 }, ...this.waypoints]
 			: []);
 
-		// Lidar — read the latest scan from sensors (computed at sensorHz)
-		// and hand to renderer for visualization. When the Safety governor
-		// is clipping (scale < 1), highlight the rays inside its forward
-		// arc in red so the visitor can SEE which rays are braking the bot.
-		const lidarRays = (this.lidarEnabled && this.measured?.lidar) ? this.measured.lidar : null;
-		let highlight = null;
-		if (lidarRays && this.controllerType === 'cascade'
-		    && this.stack.safety.lastScale < 0.999) {
-			const fwdArc = Math.PI / 4;
-			const heading = this.plant.state.heading;
-			highlight = lidarRays.map(r => {
-				let a = r.angle - heading;
-				while (a >  Math.PI) a -= 2 * Math.PI;
-				while (a < -Math.PI) a += 2 * Math.PI;
-				return Math.abs(a) <= fwdArc;
-			});
-		}
-		this.renderer.setLidar(lidarRays, this.plant.state, highlight);
-
-		// Occupancy grid overlay — only meaningful when a lidar planner is
-		// in use, so don't clutter the world otherwise.
+		// Lidar viz — rays are drawn when (a) the lidar is actually scanning
+		// (lidar_astar planner OR road pilot) and (b) the user has flipped
+		// the rays toggle on. Map grid only shows under lidar_astar since
+		// that's the only mode that integrates scans into it.
+		const lidarActive = this.planner.mode === 'lidar_astar'
+		                 || this.ui.readPilotMode() === 'road';
+		const lidarRays   = (lidarActive && this.showLidarRays && this.measured?.lidar)
+			? this.measured.lidar : null;
+		this.renderer.setLidar(lidarRays, this.plant.state, null);
 		this.renderer.setOccupancyGrid(
-			this.planner.mode === 'lidar_astar' ? this.occupancyGrid : null,
+			(this.planner.mode === 'lidar_astar' && this.showMapGrid) ? this.occupancyGrid : null,
 		);
 
 		// Periodic safety log so the numbers behind the brake are visible.
@@ -256,7 +250,7 @@ export class App {
 		const joy = document.getElementById('joystick');
 		if (!joy) return;
 		const mode = this.ui.readPilotMode();
-		joy.style.display = (mode === 'auto') ? 'none' : '';
+		joy.style.display = (mode === 'auto' || mode === 'road') ? 'none' : '';
 
 		// Sync the canvas-overlay pilot buttons too. Angle/FBW reflect
 		// the current mode; Auto indicator lights up only in auto.
@@ -267,6 +261,7 @@ export class App {
 		setActive('btnPilotAngle', mode === 'raw');
 		setActive('btnPilotFbw',   mode === 'fbw');
 		setActive('btnPilotAuto',  mode === 'auto');
+		setActive('btnPilotRoad',  mode === 'road');
 	}
 
 
@@ -455,6 +450,24 @@ export class App {
 				}
 				this._advanceWaypointIfArrived();
 
+			} else if (pilotMode === 'road') {
+				// Reactive lidar pilot — turn the latest scan into a virtual
+				// FBW stick. Goes through the cascade's FBW path so velocity
+				// and yaw-rate tracking are handled by the existing Nav layer.
+				const stick = this.road.update(
+					this.measured?.lidar,
+					this.plant.state.heading,
+					this.lidar.maxRange,
+				);
+				if (isCascade) {
+					cascadeCommand = { mode: 'fbw', stick };
+				} else {
+					const out = this.nav.updateFbw(this.measured || this.plant.state,
+						stick, this.ui.readNavGains(), navDt);
+					tiltSetpoint	 = out.tilt;
+					yawRateSetpoint  = out.yaw_rate;
+				}
+
 			} else {
 				// Integrate the arrow-key yaw rate into a virtual heading
 				// reference so the Attitude layer (cascade) or yaw torque
@@ -521,7 +534,7 @@ export class App {
 					// Lidar is a sensor too — runs at sensorHz alongside the IMU
 					// and encoder. The Safety governor in the cascade reads it
 					// from `measured.lidar`; the renderer reads it for viz.
-					if (this.lidarEnabled) {
+					if (this.planner.mode === 'lidar_astar' || this.ui.readPilotMode() === 'road') {
 						this.measured.lidar = this.lidar.scan(this.plant.state, this.renderer.obstacles);
 						// Integrate the scan into the occupancy grid — bot's
 						// accumulating belief about the world. The lidar_astar
@@ -758,6 +771,22 @@ export class App {
 		};
 		document.getElementById('btnPilotAngle').onclick = () => setPilotMode('raw');
 		document.getElementById('btnPilotFbw').onclick   = () => setPilotMode('fbw');
+		document.getElementById('btnPilotRoad').onclick  = () => setPilotMode('road');
+
+		// Road controller's algorithm picker — only meaningful while in road
+		// pilot mode, but the toggle is always live so the user can preflip
+		// before engaging. Two states: 'wsum' (weighted-sum, Jason's) and
+		// 'ftg' (Follow-the-Gap). Button label shows the current choice.
+		const btnRoadAlgo = document.getElementById('btnRoadAlgo');
+		const refreshAlgoLabel = () => {
+			btnRoadAlgo.textContent = this.road.algorithm === 'ftg' ? 'FTG' : 'WSum';
+		};
+		refreshAlgoLabel();
+		btnRoadAlgo.onclick = () => {
+			this.road.setAlgorithm(this.road.algorithm === 'ftg' ? 'wsum' : 'ftg');
+			refreshAlgoLabel();
+			this.ui.log(this.tSim, `road algo: ${this.road.algorithm}`);
+		};
 
 		document.getElementById('btnPush').onclick = () => {
 			const shove_rate = this.ui.num('shoveOmega');
@@ -777,10 +806,19 @@ export class App {
 		};
 
 		const btnLidar = document.getElementById('btnLidar');
+		btnLidar.classList.toggle('active', this.showLidarRays);
 		btnLidar.onclick = () => {
-			this.lidarEnabled = !btnLidar.classList.contains('active');
-			btnLidar.classList.toggle('active', this.lidarEnabled);
-			this.ui.log(this.tSim, `lidar: ${this.lidarEnabled ? 'on' : 'off'}`);
+			this.showLidarRays = !btnLidar.classList.contains('active');
+			btnLidar.classList.toggle('active', this.showLidarRays);
+			this.ui.log(this.tSim, `lidar rays: ${this.showLidarRays ? 'shown' : 'hidden'}`);
+		};
+
+		const btnMapGrid = document.getElementById('btnMapGrid');
+		btnMapGrid.classList.toggle('active', this.showMapGrid);
+		btnMapGrid.onclick = () => {
+			this.showMapGrid = !btnMapGrid.classList.contains('active');
+			btnMapGrid.classList.toggle('active', this.showMapGrid);
+			this.ui.log(this.tSim, `map grid: ${this.showMapGrid ? 'shown' : 'hidden'}`);
 		};
 
 		// Disturbances — instantaneous state kicks, plus a toggleable IMU bias.

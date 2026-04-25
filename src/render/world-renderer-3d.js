@@ -49,9 +49,8 @@ export class WorldRenderer3D {
 		this.ground.receiveShadow = true;
 		this.scene.add(this.ground);
 
-		// Scattered cream "path" tiles around the starting area — visual
-		// breadcrumbs in the spirit of the Bruno-Simon site.
-		this._buildPathTiles();
+		// (Stepping-stones removed — the race-track world has its own walls
+		// as visual landmarks; tiles ended up overlapping them awkwardly.)
 
 		// Orbit camera — drag to rotate, wheel to zoom. Target is updated each
 		// frame to follow the bot's position, so the user's view orientation
@@ -106,6 +105,22 @@ export class WorldRenderer3D {
 		this.pathLine.visible = false;
 		this.scene.add(this.pathLine);
 
+		// Bot trail — a fading polyline of where the bot has actually driven.
+		// Useful pedagogy: overlay actual trajectory against the planned path
+		// (the cyan pathLine above) to see how well the bot tracked.
+		// Vertex colors fade from chassis red at the head to ground orange at
+		// the tail, which reads like a tire-track scuff against the ground.
+		this.trailMax       = 300;        // max samples kept
+		this.trailMinStep   = 0.04;       // meters; skip samples closer than this
+		this.trailPoints    = [];         // ring of {x, z}
+		this.trailLine = new THREE.Line(
+			new THREE.BufferGeometry(),
+			new THREE.LineBasicMaterial({ vertexColors: true }),
+		);
+		this.trailLine.frustumCulled = false;
+		this.trailLine.visible = false;
+		this.scene.add(this.trailLine);
+
 		// Occupancy-grid overlay — a CanvasTexture mapped onto a horizontal
 		// plane just above the ground. Sized to match the grid's world extent
 		// at construction time via setOccupancyGrid().
@@ -127,7 +142,7 @@ export class WorldRenderer3D {
 
 		// Obstacle course
 		this.obstacles = new Obstacles();
-		this.obstacles.loadDemoCourse();
+		this.obstacles.loadTrack();
 		this.scene.add(this.obstacles.group);
 	}
 
@@ -383,6 +398,51 @@ export class WorldRenderer3D {
 		this.lidarLines.visible = true;
 	}
 
+	// Wipe the bot trail — call when the sim is reset so the breadcrumbs
+	// don't bridge across a teleport from end-of-run back to origin.
+	clearTrail() {
+		this.trailPoints.length = 0;
+		this.trailLine.visible  = false;
+	}
+
+	// Append the bot's current ground position to the trail and rebuild the
+	// line geometry. Internal — called from draw().
+	_updateTrail(x, z) {
+		const pts = this.trailPoints;
+		const last = pts.length ? pts[pts.length - 1] : null;
+		if (!last || Math.hypot(x - last.x, z - last.z) >= this.trailMinStep) {
+			pts.push({ x, z });
+			if (pts.length > this.trailMax) pts.shift();
+		}
+		if (pts.length < 2) {
+			this.trailLine.visible = false;
+			return;
+		}
+		// Build positions + per-vertex colors. Head is index N-1 (newest);
+		// fade toward the ground color at index 0 so the tail dissolves into
+		// the ground rather than ending in a hard line.
+		const N = pts.length;
+		const verts  = new Float32Array(N * 3);
+		const colors = new Float32Array(N * 3);
+		// chassis red (head) → ground orange (tail)
+		const headR = 0.80, headG = 0.20, headB = 0.13;
+		const tailR = 0.87, tailG = 0.40, tailB = 0.20;
+		for (let i = 0; i < N; i++) {
+			verts[i * 3 + 0] = pts[i].x;
+			verts[i * 3 + 1] = 0.03;     // just above ground, below path tiles
+			verts[i * 3 + 2] = pts[i].z;
+			const t = i / (N - 1);       // 0 at tail, 1 at head
+			colors[i * 3 + 0] = tailR + (headR - tailR) * t;
+			colors[i * 3 + 1] = tailG + (headG - tailG) * t;
+			colors[i * 3 + 2] = tailB + (headB - tailB) * t;
+		}
+		const geom = this.trailLine.geometry;
+		geom.setAttribute('position', new THREE.BufferAttribute(verts, 3));
+		geom.setAttribute('color',    new THREE.BufferAttribute(colors, 3));
+		geom.computeBoundingSphere();
+		this.trailLine.visible = true;
+	}
+
 	// path: array of {x, z} — Planner's current path. Drawn as a thin
 	// cyan polyline a hair above ground so it's visible against grass.
 	setPath(path) {
@@ -438,6 +498,10 @@ export class WorldRenderer3D {
 		// Bot world position + heading
 		this.bot.position.set(state.x, 0, state.z);
 		this.bot.rotation.y = state.heading;
+
+		// Trail of where the bot has actually driven — disabled for now,
+		// re-enable by uncommenting if you want the breadcrumb viz back.
+		// this._updateTrail(state.x, state.z);
 
 		// Nav target flag (2D position on the ground). Bob + spin so it
 		// reads as "go here" not just another course marker.
