@@ -2,6 +2,7 @@ import { ArduBalanceController } from '../controllers/ardubalance.js';
 import { Attitude } from '../controllers/stack/attitude.js';
 import { NavMixer } from '../controllers/stack/mixer.js';
 import { Wheels   } from '../controllers/stack/wheels.js';
+import { Nav      } from '../controllers/stack/nav.js';
 
 // Supervised-learning trainer.
 //
@@ -117,6 +118,76 @@ export class NNTrainer {
 			targets[n] = [rows[n].output * this.outScale];
 		}
 		return { inputs, targets };
+	}
+
+	// ── Nav distillation (auto mode only) ────────────────────────────────
+	// 4 inputs (dx, dz, heading, vel_cart), 2 outputs (vel_target_body,
+	// heading_err). Caveat: Nav has discrete logic — deadzone gate, ±90°
+	// heading gate — that an MLP smooths over. Bot may behave differently
+	// near boundaries; the lesson is that not every controller is a clean
+	// function and that's OK to know up front.
+
+	generateNavBatch(n, navGains) {
+		const inS  = Nav.NAV_INPUT_SCALES;
+		const outS = Nav.NAV_OUTPUT_SCALES;
+		const r = (lo, hi) => lo + Math.random() * (hi - lo);
+
+		const inputs  = new Array(n);
+		const targets = new Array(n);
+		for (let i = 0; i < n; i++) {
+			const dx       = r(-5, 5);
+			const dz       = r(-5, 5);
+			const heading  = r(-Math.PI, Math.PI);
+			const vel_cart = r(-3, 3);
+			const out = Nav.computeAutoRule(
+				{ dx, dz, heading, vel_cart }, navGains, 'profile',
+			);
+			const row = new Float64Array(4);
+			row[0] = dx       * inS[0];
+			row[1] = dz       * inS[1];
+			row[2] = heading  * inS[2];
+			row[3] = vel_cart * inS[3];
+			inputs[i]  = row;
+			targets[i] = [out.vel_target_body * outS[0], out.heading_err * outS[1]];
+		}
+		return { inputs, targets };
+	}
+
+	prepareNavRecorded(data) {
+		const inS  = Nav.NAV_INPUT_SCALES;
+		const outS = Nav.NAV_OUTPUT_SCALES;
+		const rows = data.filter(d => d.kind === 'cascade_nav');
+		const inputs  = new Array(rows.length);
+		const targets = new Array(rows.length);
+		for (let i = 0; i < rows.length; i++) {
+			const r = rows[i];
+			const row = new Float64Array(4);
+			row[0] = r.dx       * inS[0];
+			row[1] = r.dz       * inS[1];
+			row[2] = r.heading  * inS[2];
+			row[3] = r.vel_cart * inS[3];
+			inputs[i]  = row;
+			targets[i] = [r.vel_target_body * outS[0], r.heading_err * outS[1]];
+		}
+		return { inputs, targets };
+	}
+
+	async trainNav({ mlp, navGains, mode = 'random', data = null,
+	                 epochs = 1000, samplesPerEpoch = 1000,
+	                 lr = 0.02, momentum = 0.9, onProgress }) {
+		const losses = [];
+		const recorded = mode === 'recorded' ? this.prepareNavRecorded(data) : null;
+
+		for (let e = 0; e < epochs; e++) {
+			const batch = recorded ?? this.generateNavBatch(samplesPerEpoch, navGains);
+			const loss  = mlp.trainEpoch(batch.inputs, batch.targets, lr, momentum);
+			losses.push(loss);
+			if (onProgress && (e % 5 === 0 || e === epochs - 1)) {
+				onProgress(e, loss);
+				await new Promise(r => setTimeout(r, 0));
+			}
+		}
+		return losses;
 	}
 
 	// ── Wheels distillation ───────────────────────────────────────────────

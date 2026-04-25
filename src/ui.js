@@ -206,7 +206,7 @@ export class UI {
   ];
 
   static TUNING_SELECT_IDS = ['ctrlType', 'navMode', 'nnMode', 'pilotMode',
-    'pitch_arm_mode', 'mixer_mode', 'yaw_arm_mode', 'wheels_mode'];
+    'pitch_arm_mode', 'mixer_mode', 'yaw_arm_mode', 'wheels_mode', 'nav_mode_nn'];
 
   // Snapshot of every tuning-relevant input. All input IDs are kept
   // verbatim, so writeAll() is a clean inverse of readAll().

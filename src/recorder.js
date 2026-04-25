@@ -83,6 +83,15 @@ export class Recorder {
 		});
 	}
 
+	// Cascade Nav (auto): world error → vel_target + heading_err.
+	recordCascadeNav({ dx, dz, heading, vel_cart, vel_target_body, heading_err }) {
+		if (!this.recording) return;
+		this.data.push({
+			kind: 'cascade_nav',
+			dx, dz, heading, vel_cart, vel_target_body, heading_err,
+		});
+	}
+
 	// Bulk serialize — useful for offline training or inspection.
 	toJSON() {
 		return JSON.stringify({
