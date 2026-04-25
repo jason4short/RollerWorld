@@ -137,32 +137,51 @@ export class Obstacles {
 	}
 
 	// --- A demo course ------------------------------------------------------
+	// Serpentine maze. Bot starts at (0, 0); finish at the far end. Four
+	// vertical walls alternately block the top and bottom half-corridor,
+	// forcing a snake path that direct nav can't navigate but A* solves
+	// trivially. Boundary walls top and bottom prevent going around.
+	//
+	// Wall layout (top-down view, x→ horizontal, z↑ vertical):
+	//
+	//     z=+2.5  ─────────────────────────────────────────────────  (boundary)
+	//                   │              │              │
+	//     z=+0.3        │     ┌────────┴──┐    ┌──────┴──┐
+	//     z= 0     S→   │     │           │    │         │   ←G
+	//     z=-0.3   ┌────┴──┐  │           │    │         │
+	//              │       │  │           │    │         │
+	//     z=-2.5  ─┴───────┴──┴───────────┴────┴─────────┴───────  (boundary)
+	//             x=0  ½  3   ½    5.5   ½   8    ½   10.5    12
+	//
+	// The four maze walls have extents (after yaw=π/2 rotation):
+	//     block-bottom (z=-0.85, length 2.3) → z = -2.0 to +0.3
+	//     block-top    (z=+0.85, length 2.3) → z = -0.3 to +2.0
+	// Bot must alternate above-then-below to pass each one.
+
 	loadDemoCourse() {
 		this.clear();
-		// Kickoff flags either side of starting line.
-		this.addFlag({ x:  0.6, z:  0.6, color: 0x44ff66 });
-		this.addFlag({ x:  0.6, z: -0.6, color: 0x44ff66 });
 
-		// A wall to drive around.
-		this.addWall({ x: 2.5, z:  0.7, length: 1.2 });
+		const wall_t = 0.15;
 
-		// Ring gate to drive through, slightly off center.
-		this.addRing({ x: 4.0, z: -0.3, radius: 0.9 });
+		// Boundary walls — bot can't bypass the maze.
+		this.addWall({ x: 6, z:  2.5, length: 13.0, thickness: wall_t, yaw: 0 });
+		this.addWall({ x: 6, z: -2.5, length: 13.0, thickness: wall_t, yaw: 0 });
 
-		// Mid-course tunnel.
-		this.addTunnel({ x: 6.0, z:  0.0, length: 1.6, radius: 1.0 });
+		// Serpentine maze walls.
+		this.addWall({ x:  3.0, z: -0.85, length: 2.3, thickness: wall_t, yaw: Math.PI / 2 });
+		this.addWall({ x:  5.5, z:  0.85, length: 2.3, thickness: wall_t, yaw: Math.PI / 2 });
+		this.addWall({ x:  8.0, z: -0.85, length: 2.3, thickness: wall_t, yaw: Math.PI / 2 });
+		this.addWall({ x: 10.5, z:  0.85, length: 2.3, thickness: wall_t, yaw: Math.PI / 2 });
 
-		// Slalom flags.
-		this.addFlag({ x:  8.0, z:  0.5, color: 0xffcc44 });
-		this.addFlag({ x:  9.0, z: -0.5, color: 0xffcc44 });
-		this.addFlag({ x: 10.0, z:  0.5, color: 0xffcc44 });
+		// Start markers.
+		this.addFlag({ x: 0.6, z:  0.6, color: 0x44ff66 });
+		this.addFlag({ x: 0.6, z: -0.6, color: 0x44ff66 });
 
-		// A second wall.
-		this.addWall({ x: 11.5, z: 0, length: 0.8, yaw: Math.PI / 4 });
+		// Decorative hoop just before the finish (pass-through).
+		this.addRing({ x: 11.7, z: 0, radius: 0.85, color: 0xcc3322 });
 
-		// Finish gate — two flags + a ring.
-		this.addFlag({ x: 13.0, z:  0.7, color: 0xff4466 });
-		this.addFlag({ x: 13.0, z: -0.7, color: 0xff4466 });
-		this.addRing({ x: 13.0, z:  0.0, radius: 1.0, color: 0xff4466 });
+		// Finish line.
+		this.addFlag({ x: 12.5, z:  0.7, color: 0xff4466 });
+		this.addFlag({ x: 12.5, z: -0.7, color: 0xff4466 });
 	}
 }
