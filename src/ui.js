@@ -149,12 +149,15 @@ export class UI {
         PWM_max:        this.num('PWM_max'),
       },
       // Safety governor — clips Nav's vel_target based on forward lidar.
-      // Hardcoded defaults for now; expose a panel later if tuning matters.
+      // Tight forward beam, not a wide cone: in narrow corridors a 90°
+      // cone catches walls on both sides of every gap and the bot can
+      // never thread through. ±20° matches "directly ahead" — the bot
+      // can rotate just enough to clear walls from the beam and drive on.
       safety: {
         enabled:    true,
-        distMin:    0.5,           // full stop within this range (m)
-        distMax:    2.5,           // full speed beyond this range (m)
-        forwardArc: Math.PI / 4,   // ±45° around heading counts as "ahead"
+        distMin:    0.4,                 // full stop within this range (m)
+        distMax:    1.8,                 // full speed beyond this range (m)
+        forwardArc: Math.PI / 9,         // ±20° around heading counts as "ahead"
       },
     };
   }
