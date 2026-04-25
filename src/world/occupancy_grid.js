@@ -99,20 +99,32 @@ export class OccupancyGrid {
 	// optimistic-traversable (the bot will plan into them and discover them
 	// as it goes); confidently-free cells are obviously fine.
 	//
-	// `pad` is ignored — cell discretization plus a small inflation step
-	// in isBlocked covers bot-radius margin.
-	isBlocked(x, z, _pad) {
+	// `pad` inflates walls by that distance — a cell is blocked if itself
+	// or any neighbor within `pad` meters is occupied. Without inflation,
+	// A* would route paths through cells immediately next to walls, and
+	// the Safety governor would then brake the bot before it could follow.
+	// Pad must be ≥ Safety.distMin to keep the planner out of the
+	// brake zone.
+	isBlocked(x, z, pad = 0) {
 		const c = this.cellAt(x, z);
-		if (!this.inBounds(c.i, c.j)) return false;   // out-of-bounds = unknown
-		return this.lo[this.idx(c.i, c.j)] > OCC_THRESH;
+		if (!this.inBounds(c.i, c.j)) return false;
+		const r = Math.ceil(pad / this.cellSize);
+		for (let dj = -r; dj <= r; dj++) {
+			for (let di = -r; di <= r; di++) {
+				const ci = c.i + di, cj = c.j + dj;
+				if (!this.inBounds(ci, cj)) continue;
+				if (this.lo[this.idx(ci, cj)] > OCC_THRESH) return true;
+			}
+		}
+		return false;
 	}
 
-	hasLineOfSight(a, b, _pad) {
+	hasLineOfSight(a, b, pad = 0) {
 		const dist = Math.hypot(b.x - a.x, b.z - a.z);
 		const steps = Math.max(2, Math.ceil(dist / 0.05));
 		for (let i = 1; i < steps; i++) {
 			const t = i / steps;
-			if (this.isBlocked(a.x + (b.x - a.x) * t, a.z + (b.z - a.z) * t)) return false;
+			if (this.isBlocked(a.x + (b.x - a.x) * t, a.z + (b.z - a.z) * t, pad)) return false;
 		}
 		return true;
 	}

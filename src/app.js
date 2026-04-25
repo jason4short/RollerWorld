@@ -374,7 +374,10 @@ export class App {
 				const start = this.measured ?? this.plant.state;
 				const path = this.planner.plan(
 					{ x: start.x, z: start.z ?? 0 }, this.planner.goal,
-					{ obstacles: this.occupancyGrid, res: 0.25, pad: 0.25 },
+					// pad > Safety.distMin (0.5) so paths stay clear of the
+					// brake zone — otherwise A* plans through cells the
+					// Safety governor would refuse to drive into.
+					{ obstacles: this.occupancyGrid, res: 0.25, pad: 0.6 },
 				);
 				if (path.length > 0) {
 					this.waypoints.length = 0;
@@ -964,9 +967,10 @@ export class App {
 			// as a teaching contrast).
 			const obstacles = this.planner.mode === 'lidar_astar'
 				? this.occupancyGrid : this.renderer.obstacles;
+			const pad = this.planner.mode === 'lidar_astar' ? 0.6 : 0.25;
 			const path  = this.planner.plan(
 				{ x: start.x, z: start.z ?? 0 }, hit,
-				{ obstacles, res: 0.25, pad: 0.25 },
+				{ obstacles, res: 0.25, pad },
 			);
 			// First segment of A* output is the start point itself; drop it
 			// when extending so we don't queue a redundant "go to where I
