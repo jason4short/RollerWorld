@@ -578,9 +578,10 @@ export class App {
 		const tab  = this.currentTab ?? 'control';
 		const ctrl = this.controllerType;
 		for (const el of document.querySelectorAll('.panel')) {
-			const tabOk  = !el.dataset.tab  || el.dataset.tab === tab;
-			const ctrlOk = !el.dataset.ctrl || el.dataset.ctrl === ctrl;
-			el.style.display = (tabOk && ctrlOk) ? '' : 'none';
+			const tabOk     = !el.dataset.tab     || el.dataset.tab === tab;
+			const ctrlOk    = !el.dataset.ctrl    || el.dataset.ctrl === ctrl;
+			const ctrlNotOk = !el.dataset.ctrlNot || el.dataset.ctrlNot !== ctrl;
+			el.style.display = (tabOk && ctrlOk && ctrlNotOk) ? '' : 'none';
 		}
 		for (const btn of document.querySelectorAll('#tabBar .tab-btn')) {
 			btn.classList.toggle('active', btn.dataset.tab === tab);
