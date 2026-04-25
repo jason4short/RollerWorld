@@ -42,7 +42,12 @@ export class Planner {
 	// world: { bot: {x, z}, obstacles, res?, pad? }
 	plan(start, goal, world) {
 		this.goal = { x: goal.x, z: goal.z };
-		if (this.mode === 'astar' && world?.obstacles) {
+		// Both 'astar' (ground truth) and 'lidar_astar' (discovered map) run
+		// A* — the only difference is which `obstacles` was passed in. The
+		// search is identical; the world model is the experimental variable.
+		const useAstar = (this.mode === 'astar' || this.mode === 'lidar_astar')
+		              && world?.obstacles;
+		if (useAstar) {
 			const raw = Planner.astar(start, goal, world.obstacles,
 				world.res ?? 0.25, world.pad ?? 0.25);
 			this.path = raw.length > 0
