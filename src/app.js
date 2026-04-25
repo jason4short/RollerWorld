@@ -192,7 +192,18 @@ export class App {
 		this.plotter.draw(this.history, series);
 		this.drawPanelPlots(pwmRef);
 		this.drawCascadeFlow();
+		this._syncJoystickVisibility();
 		this.ui.setStats(this.tSim, this.plant.state, this.pilotTilt);
+	}
+
+	// Show the overlay joystick only when the pilot is actually using it
+	// (FBW or Raw tilt). Auto mode hides it — nav drives, the joystick
+	// would just clutter the world view.
+	_syncJoystickVisibility() {
+		const joy = document.getElementById('joystick');
+		if (!joy) return;
+		const mode = this.ui.readPilotMode();
+		joy.style.display = (mode === 'auto') ? 'none' : '';
 	}
 
 	// Animated diagram of the cascade. Four rooms stacked top-down with

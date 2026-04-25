@@ -30,7 +30,14 @@
 <body>
 
 <div>
-  <canvas id="world" width="900" height="420"></canvas>
+  <div id="worldStage" style="position:relative">
+    <canvas id="world" width="900" height="420"></canvas>
+    <canvas id="joystick" width="144" height="144"
+      style="position:absolute; right:10px; bottom:10px;
+             width:144px; height:144px; aspect-ratio:1;
+             background:transparent; border:0;
+             touch-action:none; pointer-events:auto"></canvas>
+  </div>
   <div style="margin-top:8px; display:flex; gap:10px; align-items:center; font-size:12px">
     <span style="color:#666">Plot:</span>
     <select id="plot1"></select>
@@ -60,7 +67,7 @@
           </select>
         </label>
         <label>Hidden neurons   <input type="number" id="nnHidden" value="6"  step="1"  min="1" max="64"></label>
-        <label>Epochs           <input type="number" id="nnEpochs" value="3000" step="25" min="10"></label>
+        <label>Epochs           <input type="number" id="nnEpochs" value="5000" step="25" min="10"></label>
         <label>Samples / epoch  <input type="number" id="nnSamples" value="1000" step="100" min="100"></label>
         <label>Learning rate    <input type="number" id="nnLR"     value="0.02" step="0.005"></label>
         <div class="row" style="margin-top:4px"><button id="btnTrainNN" class="warn">Train</button></div>
@@ -133,11 +140,8 @@
         <option value="raw">Raw tilt (arrow keys)</option>
       </select>
     </label>
-    <canvas id="joystick" width="240" height="240"
-      style="width:240px; height:240px; max-width:100%; aspect-ratio:1;
-             background:transparent; border:0; display:block;
-             margin:8px auto; touch-action:none"></canvas>
     <div style="color:#666; font-size:11px; text-align:center">
+      Joystick is overlaid on the world canvas (lower-right) when in FBW or Raw modes.<br>
       ↑ forward · ↓ back · ←/→ yaw · release = active brake
     </div>
   </details>
