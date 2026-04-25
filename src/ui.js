@@ -235,6 +235,6 @@ export class UI {
       : '';
     this.statsEl.textContent =
       `t=${t.toFixed(2)}s   pitch=${(s.pitch * 180 / Math.PI).toFixed(1)}°   ` +
-      `x=${s.x.toFixed(2)}m   v=${s.v.toFixed(2)}${pilot}`;
+      `x=${s.x.toFixed(2)}m   v=${s.vel_cart.toFixed(2)}${pilot}`;
   }
 }
