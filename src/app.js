@@ -7,6 +7,7 @@ import { NavController }				 from './controllers/nav.js';
 import { YawController }				 from './controllers/yaw.js';
 import { NNController }					from './controllers/nn.js';
 import { ControllerStack }				from './controllers/stack/index.js';
+import { Planner }							from './controllers/stack/planner.js';
 import { MLP }									 from './nn/mlp.js';
 import { NNTrainer }						 from './nn/trainer.js';
 import { WorldRenderer3D }			 from './render/world-renderer-3d.js';
@@ -48,6 +49,7 @@ export class App {
 		this.yawController 		= new YawController();
 		this.stack 				= new ControllerStack();
 		this._lastStackOut		= null;
+		this.planner			= new Planner();
 		this.currentTab			= 'control';   // 'control' | 'sim'
 
 		// Disturbance state — biases / impulses injected by the Disturbances
@@ -180,6 +182,11 @@ export class App {
 		// Upcoming WPs (excluding the head, which is rendered as the bobbing
 		// target). Empty when queue is one or zero deep.
 		const queueRest = this.waypoints.length > 1 ? this.waypoints.slice(1) : [];
+		// Draw the path the planner laid down: bot → each remaining waypoint.
+		// Shrinks naturally as waypoints are consumed.
+		this.renderer.setPath(this.waypoints.length
+			? [{ x: this.plant.state.x, z: this.plant.state.z ?? 0 }, ...this.waypoints]
+			: []);
 		this.renderer.draw(this.plant.state, this.plant.params, navTarget, queueRest);
 		const fRef = this.controllerType === 'ardubalance'
 			? this.motor.Km
@@ -756,6 +763,12 @@ export class App {
 		};
 
 		document.getElementById('btnTrainNavNN').onclick = () => this.trainNavNN();
+
+		// Planner mode (Direct vs A*) — applies on the next shift+click.
+		document.getElementById('plannerMode').onchange = e => {
+			this.planner.setMode(e.target.value);
+			this.ui.log(this.tSim, `planner: ${e.target.value}`);
+		};
 		document.getElementById('nav_mode_nn').onchange = e => {
 			const mode = e.target.value;
 			const mlp = this.navMlp ?? null;
@@ -812,8 +825,18 @@ export class App {
 			if (!e.shiftKey) return;
 			const hit = this.renderer.screenToGround(e.clientX, e.clientY);
 			if (!hit) return;
-			this.waypoints.push({ x: hit.x, z: hit.z });
-			// Head of the queue is the active target.
+
+			// Run the planner. In direct mode the path is just [hit]; in A*
+			// mode the planner routes around walls. Either way, the result
+			// becomes the waypoint queue, so the existing arrival-and-advance
+			// logic handles multi-waypoint paths without changes.
+			const start = this.measured ?? this.plant.state;
+			const path  = this.planner.plan(
+				{ x: start.x, z: start.z ?? 0 }, hit,
+				{ obstacles: this.renderer.obstacles, res: 0.25, pad: 0.25 },
+			);
+			this.waypoints.push(...path);
+
 			const head = this.waypoints[0];
 			this.nav.target_x = head.x;
 			this.nav.target_z = head.z;
@@ -822,7 +845,7 @@ export class App {
 			document.getElementById('navEnabled').checked = true;
 			document.getElementById('pilotMode').value = 'auto';
 			this.ui.log(this.tSim,
-				`WP +(${hit.x.toFixed(2)}, ${hit.z.toFixed(2)})  · queue=${this.waypoints.length}`);
+				`WP via ${this.planner.mode}: (${hit.x.toFixed(2)}, ${hit.z.toFixed(2)})  · path=${path.length}, queue=${this.waypoints.length}`);
 		});
 
 		for (const btn of document.querySelectorAll('[data-preset]')) {

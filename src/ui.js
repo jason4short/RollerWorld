@@ -204,7 +204,7 @@ export class UI {
     // depend on whether the user has trained an NN this session.
   ];
 
-  static TUNING_SELECT_IDS = ['ctrlType', 'navMode', 'pilotMode'];
+  static TUNING_SELECT_IDS = ['ctrlType', 'navMode', 'pilotMode', 'plannerMode'];
 
   // Snapshot of every tuning-relevant input. All input IDs are kept
   // verbatim, so writeAll() is a clean inverse of readAll().

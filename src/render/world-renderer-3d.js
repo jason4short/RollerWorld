@@ -79,6 +79,15 @@ export class WorldRenderer3D {
 		// hidden rather than destroyed.
 		this.queueFlags = [];
 
+		// Planner path polyline — set per-frame from the latest planner output.
+		this.pathLine = new THREE.Line(
+			new THREE.BufferGeometry(),
+			new THREE.LineBasicMaterial({ color: 0x66ddff, transparent: true, opacity: 0.85 }),
+		);
+		this.pathLine.frustumCulled = false;
+		this.pathLine.visible = false;
+		this.scene.add(this.pathLine);
+
 		// Obstacle course
 		this.obstacles = new Obstacles();
 		this.obstacles.loadDemoCourse();
@@ -247,6 +256,24 @@ export class WorldRenderer3D {
 		flag.castShadow = true;
 		g.add(flag);
 		return g;
+	}
+
+	// path: array of {x, z} — Planner's current path. Drawn as a thin
+	// cyan polyline a hair above ground so it's visible against grass.
+	setPath(path) {
+		if (!path || path.length < 2) {
+			this.pathLine.visible = false;
+			return;
+		}
+		const verts = new Float32Array(path.length * 3);
+		for (let i = 0; i < path.length; i++) {
+			verts[i * 3 + 0] = path[i].x;
+			verts[i * 3 + 1] = 0.04;
+			verts[i * 3 + 2] = path[i].z;
+		}
+		this.pathLine.geometry.setAttribute('position', new THREE.BufferAttribute(verts, 3));
+		this.pathLine.geometry.computeBoundingSphere();
+		this.pathLine.visible = true;
 	}
 
 	draw(state, params, navTarget = null, queueRest = []) {

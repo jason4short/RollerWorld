@@ -101,6 +101,41 @@ export class Obstacles {
 		return g;
 	}
 
+	// --- Collision queries (used by the Planner) ---------------------------
+	// Only walls block. Hoops and tunnels are pass-through (the bot drives
+	// under/through them); flags are decorative.
+	//
+	// `pad` adds bot-radius padding so the planner routes around walls with
+	// a margin instead of grazing them.
+
+	isBlocked(x, z, pad = 0.2) {
+		for (const it of this.items) {
+			if (it.type !== 'wall') continue;
+			// AABB test in the wall's rotated local frame.
+			const dx = x - it.position[0];
+			const dz = z - it.position[1];
+			const cs = Math.cos(-it.yaw);
+			const sn = Math.sin(-it.yaw);
+			const lx = dx * cs - dz * sn;
+			const lz = dx * sn + dz * cs;
+			if (Math.abs(lx) < it.length    / 2 + pad &&
+			    Math.abs(lz) < it.thickness / 2 + pad) return true;
+		}
+		return false;
+	}
+
+	// Line-of-sight test by sub-sampling the segment. Used for path
+	// smoothing — if a→b is unblocked, we can skip intermediate waypoints.
+	hasLineOfSight(a, b, pad = 0.2) {
+		const dist  = Math.hypot(b.x - a.x, b.z - a.z);
+		const steps = Math.max(2, Math.ceil(dist / 0.05));
+		for (let i = 1; i < steps; i++) {
+			const t = i / steps;
+			if (this.isBlocked(a.x + (b.x - a.x) * t, a.z + (b.z - a.z) * t, pad)) return false;
+		}
+		return true;
+	}
+
 	// --- A demo course ------------------------------------------------------
 	loadDemoCourse() {
 		this.clear();

@@ -153,6 +153,12 @@
         <option value="pd">PD (classic)</option>
       </select>
     </label>
+    <label>Planner
+      <select id="plannerMode">
+        <option value="direct" selected>Direct (point and go)</option>
+        <option value="astar">A* (route around walls)</option>
+      </select>
+    </label>
     <div data-navmode="pd">
       <label>Kp (rad/m)    <input type="number" id="Kp_nav" value="0.15" step="0.01"></label>
     </div>
@@ -205,8 +211,8 @@
 
   <details class="panel" data-tab="control" data-ctrl="cascade" open>
     <summary>Attitude — pitch (force out)</summary>
-    <label>pitch_P (N/rad)        <input type="number" id="att_pitch_P"   value="80"  step="2"></label>
-    <label>pitch_D (N·s/rad)      <input type="number" id="att_pitch_D"   value="6"   step="0.5"></label>
+    <label>pitch_P (N/rad)        <input type="number" id="att_pitch_P"   value="200"  step="2"></label>
+    <label>pitch_D (N·s/rad)      <input type="number" id="att_pitch_D"   value="20"   step="0.5"></label>
     <label>pitch_I (auto-trim)    <input type="number" id="att_pitch_I"   value="0"   step="0.01"></label>
     <label>force_max (N)          <input type="number" id="att_force_max" value="60"  step="5"></label>
     <label>Pitch
