@@ -107,10 +107,10 @@ export class WorldRenderer3D {
 		this.scene.add(this.pathLine);
 
 		// Lidar rays — N short line segments from the bot to each scan hit.
-		// Built lazily (vertex buffer sized on first setLidar() call).
+		// Vertex colors so the Safety governor can highlight clipping rays.
 		this.lidarLines = new THREE.LineSegments(
 			new THREE.BufferGeometry(),
-			new THREE.LineBasicMaterial({ color: 0xffee88, transparent: true, opacity: 0.55 }),
+			new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.7 }),
 		);
 		this.lidarLines.frustumCulled = false;
 		this.lidarLines.visible = false;
@@ -294,14 +294,18 @@ export class WorldRenderer3D {
 
 	// rays: array of { hit_x, hit_z } from Lidar.scan(). Drawn as line
 	// segments from the bot up to each hit. Bot origin is the line start.
-	// Pass null/empty to hide.
-	setLidar(rays, botPos, height = 0.18) {
+	// `highlight` is an optional same-length boolean array; highlighted
+	// rays are drawn red (safety clipping), unhighlighted yellow.
+	// Pass null/empty rays to hide.
+	setLidar(rays, botPos, highlight = null, height = 0.18) {
 		if (!rays || rays.length === 0) {
 			this.lidarLines.visible = false;
 			return;
 		}
-		const verts = new Float32Array(rays.length * 6);   // 2 verts × 3 floats per ray
-		for (let i = 0; i < rays.length; i++) {
+		const N = rays.length;
+		const verts  = new Float32Array(N * 6);   // 2 verts × 3 floats per ray
+		const colors = new Float32Array(N * 6);   // 2 verts × 3 floats per ray
+		for (let i = 0; i < N; i++) {
 			const r = rays[i];
 			const j = i * 6;
 			verts[j + 0] = botPos.x;
@@ -310,8 +314,16 @@ export class WorldRenderer3D {
 			verts[j + 3] = r.hit_x;
 			verts[j + 4] = height;
 			verts[j + 5] = r.hit_z;
+			// Color: yellow normally, red when this ray triggered safety clipping.
+			const hot = highlight && highlight[i];
+			const cR = hot ? 1.00 : 1.00;
+			const cG = hot ? 0.30 : 0.93;
+			const cB = hot ? 0.30 : 0.53;
+			colors[j + 0] = cR; colors[j + 1] = cG; colors[j + 2] = cB;
+			colors[j + 3] = cR; colors[j + 4] = cG; colors[j + 5] = cB;
 		}
 		this.lidarLines.geometry.setAttribute('position', new THREE.BufferAttribute(verts, 3));
+		this.lidarLines.geometry.setAttribute('color',    new THREE.BufferAttribute(colors, 3));
 		this.lidarLines.geometry.computeBoundingSphere();
 		this.lidarLines.visible = true;
 	}

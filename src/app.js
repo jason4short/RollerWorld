@@ -192,11 +192,35 @@ export class App {
 			: []);
 
 		// Lidar — read the latest scan from sensors (computed at sensorHz)
-		// and hand to renderer for visualization.
-		this.renderer.setLidar(
-			(this.lidarEnabled && this.measured?.lidar) ? this.measured.lidar : null,
-			this.plant.state,
-		);
+		// and hand to renderer for visualization. When the Safety governor
+		// is clipping (scale < 1), highlight the rays inside its forward
+		// arc in red so the visitor can SEE which rays are braking the bot.
+		const lidarRays = (this.lidarEnabled && this.measured?.lidar) ? this.measured.lidar : null;
+		let highlight = null;
+		if (lidarRays && this.controllerType === 'cascade'
+		    && this.stack.safety.lastScale < 0.999) {
+			const fwdArc = Math.PI / 4;
+			const heading = this.plant.state.heading;
+			highlight = lidarRays.map(r => {
+				let a = r.angle - heading;
+				while (a >  Math.PI) a -= 2 * Math.PI;
+				while (a < -Math.PI) a += 2 * Math.PI;
+				return Math.abs(a) <= fwdArc;
+			});
+		}
+		this.renderer.setLidar(lidarRays, this.plant.state, highlight);
+
+		// Periodic safety log so the numbers behind the brake are visible.
+		// Throttled to ~2 Hz when actively clipping; silent otherwise.
+		if (this.controllerType === 'cascade' && this.stack.safety.lastScale < 0.999) {
+			const now = performance.now();
+			if (!this._lastSafetyLogT || now - this._lastSafetyLogT > 500) {
+				this._lastSafetyLogT = now;
+				this.ui.log(this.tSim,
+					`safety: scale=${this.stack.safety.lastScale.toFixed(2)} ` +
+					`minDist=${this.stack.safety.lastMinDist.toFixed(2)}m`);
+			}
+		}
 
 		this.renderer.draw(this.plant.state, this.plant.params, navTarget, queueRest);
 		const fRef = this.controllerType === 'ardubalance'
