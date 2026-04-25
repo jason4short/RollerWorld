@@ -20,6 +20,17 @@
 // On a balance bot you can't just "command a velocity" — you can only lean,
 // and physics turns lean into acceleration. So this layer is where the
 // physical reality of the platform meets the abstract "go this fast" command.
+//
+// Rule vs NN
+// ----------
+// The actual velocity-error → tilt math is a 2-input function, the smallest
+// learnable layer in the stack. setMode('rule') uses `Kvel · err` clamped
+// to ±tiltLimit; setMode('nn', mlp) routes the same two inputs through an
+// MLP. LPF and slew always run as preprocessing — they're stateful utility,
+// not the function we're learning.
+
+const NN_INPUT_SCALES = [1 / 3, 1 / 3];   // vel_lpf, vel_target — both ±3 m/s
+const NN_OUTPUT_SCALE = Math.PI / 6;       // ±1 → ±30° tilt
 
 export class NavMixer {
 	constructor() {
@@ -27,6 +38,26 @@ export class NavMixer {
 		this.vel_target   = 0;   // post-slew velocity setpoint
 		this.pitch_target = 0;   // last output (exposed for plotting / NN training)
 		this.yaw_target   = 0;
+		this.mode         = 'rule';
+		this.mlp          = null;
+	}
+
+	setMode(mode, mlp = null) {
+		this.mode = mode;
+		this.mlp  = mlp;
+	}
+
+	static get NN_INPUT_SCALES() { return NN_INPUT_SCALES; }
+	static get NN_OUTPUT_SCALE() { return NN_OUTPUT_SCALE; }
+
+	// Stateless rule: the function the NN trainer queries as teacher and
+	// the rule branch evaluates at runtime. Single source of truth.
+	static computeTilt(vel_lpf, vel_target, gains) {
+		const { Kvel, tiltLimit } = gains;
+		let pitch = Kvel * (vel_target - vel_lpf);
+		if (pitch >  tiltLimit) pitch =  tiltLimit;
+		if (pitch < -tiltLimit) pitch = -tiltLimit;
+		return pitch;
 	}
 
 	reset() {
@@ -61,10 +92,20 @@ export class NavMixer {
 	}
 
 	_velocityErrorToTilt(gains) {
-		const { Kvel, tiltLimit } = gains;
-		let pitch = Kvel * (this.vel_target - this.vel_lpf);
-		if (pitch >  tiltLimit) pitch =  tiltLimit;
-		if (pitch < -tiltLimit) pitch = -tiltLimit;
-		this.pitch_target = pitch;
+		this.pitch_target = (this.mode === 'nn' && this.mlp)
+			? this._tiltFromNN(gains)
+			: NavMixer.computeTilt(this.vel_lpf, this.vel_target, gains);
+	}
+
+	_tiltFromNN(gains) {
+		const x = [
+			this.vel_lpf    * NN_INPUT_SCALES[0],
+			this.vel_target * NN_INPUT_SCALES[1],
+		];
+		const y = this.mlp.forward(x);
+		let pitch = y[0] * NN_OUTPUT_SCALE;
+		if (pitch >  gains.tiltLimit) pitch =  gains.tiltLimit;
+		if (pitch < -gains.tiltLimit) pitch = -gains.tiltLimit;
+		return pitch;
 	}
 }

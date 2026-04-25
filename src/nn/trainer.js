@@ -1,5 +1,6 @@
 import { ArduBalanceController } from '../controllers/ardubalance.js';
 import { Attitude } from '../controllers/stack/attitude.js';
+import { NavMixer } from '../controllers/stack/mixer.js';
 
 // Supervised-learning trainer.
 //
@@ -151,6 +152,49 @@ export class NNTrainer {
 			targets[i] = [force * outScale];
 		}
 		return { inputs, targets };
+	}
+
+	// ── Mixer distillation ────────────────────────────────────────────────
+	// The smallest layer to learn: 2 inputs (vel_lpf, vel_target),
+	// 1 output (pitch_target). The teacher is a saturating linear
+	// function — `Kvel · err` clamped to ±tiltLimit. With even 4 hidden
+	// units an MLP nails it in a few hundred epochs. Useful as the
+	// "trivial" end of the pedagogical spectrum opposite the legacy
+	// whole-stack distillation.
+
+	generateMixerBatch(n, mixerGains) {
+		const inScale  = NavMixer.NN_INPUT_SCALES;
+		const outScale = 1 / NavMixer.NN_OUTPUT_SCALE;
+		const r = (lo, hi) => lo + Math.random() * (hi - lo);
+
+		const inputs  = new Array(n);
+		const targets = new Array(n);
+		for (let i = 0; i < n; i++) {
+			const vel_lpf    = r(-3, 3);
+			const vel_target = r(-3, 3);
+			const tilt = NavMixer.computeTilt(vel_lpf, vel_target, mixerGains);
+			const row = new Float64Array(2);
+			row[0] = vel_lpf    * inScale[0];
+			row[1] = vel_target * inScale[1];
+			inputs[i]  = row;
+			targets[i] = [tilt * outScale];
+		}
+		return { inputs, targets };
+	}
+
+	async trainMixer({ mlp, mixerGains, epochs = 500, samplesPerEpoch = 500,
+	                   lr = 0.02, momentum = 0.9, onProgress }) {
+		const losses = [];
+		for (let e = 0; e < epochs; e++) {
+			const batch = this.generateMixerBatch(samplesPerEpoch, mixerGains);
+			const loss  = mlp.trainEpoch(batch.inputs, batch.targets, lr, momentum);
+			losses.push(loss);
+			if (onProgress && (e % 5 === 0 || e === epochs - 1)) {
+				onProgress(e, loss);
+				await new Promise(r => setTimeout(r, 0));
+			}
+		}
+		return losses;
 	}
 
 	async trainAttitudePitch({ mlp, attGains, epochs = 1000, samplesPerEpoch = 1000,

@@ -195,6 +195,24 @@
     </label>
   </div>
 
+  <details class="panel" data-ctrl="cascade">
+    <summary>Mixer — velocity → tilt</summary>
+    <p style="font-size:11px; color:#888; margin: 0 0 6px 0">
+      Gains live in the Nav panel (Kvel, tiltLimit, a_max). This panel toggles
+      the math between rule and a small trained MLP — the smallest learnable layer.
+    </p>
+    <label>Mixer
+      <select id="mixer_mode">
+        <option value="rule" selected>Rule (Kvel · err)</option>
+        <option value="nn">Neural net (trained)</option>
+      </select>
+    </label>
+    <div class="row" style="margin-top:4px">
+      <button id="btnTrainMixerNN" class="warn">Train mixer NN</button>
+    </div>
+    <div id="mixerNNStats" style="font-size:11px; color:#888; margin-top:4px"></div>
+  </details>
+
   <details class="panel" data-ctrl="cascade" open>
     <summary>Attitude — pitch arm (force out)</summary>
     <label>pitch_P (N/rad)        <input type="number" id="att_pitch_P"   value="80"  step="2"></label>

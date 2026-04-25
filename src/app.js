@@ -513,6 +513,19 @@ export class App {
 			this.ui.log(this.tSim, `pitch arm: ${mode}`);
 		};
 
+		document.getElementById('btnTrainMixerNN').onclick = () => this.trainMixerNN();
+		document.getElementById('mixer_mode').onchange = e => {
+			const mode = e.target.value;
+			const mlp = this.mixerMlp ?? null;
+			if (mode === 'nn' && !mlp) {
+				this.ui.log(this.tSim, 'no trained mixer NN yet — staying on rule');
+				e.target.value = 'rule';
+				return;
+			}
+			this.stack.mixer.setMode(mode, mlp);
+			this.ui.log(this.tSim, `mixer: ${mode}`);
+		};
+
 		document.getElementById('btnCalibrate').onclick = () => this.calibrateMotor();
 		document.getElementById('btnClearLUT').onclick = () => {
 			this.controllers.ardubalance.pwmTable.clear();
@@ -757,6 +770,41 @@ export class App {
 		const finalLoss = lossHistory.at(-1);
 		nnStats.textContent = `done: loss=${finalLoss.toExponential(3)}	(${dt.toFixed(1)}s)`;
 		this.ui.log(this.tSim, `NN trained: final loss=${finalLoss.toExponential(3)} in ${dt.toFixed(1)}s`);
+	}
+
+	// Train a small MLP to imitate the rule-based mixer (vel → tilt). Two
+	// inputs, one output — converges quickly and shows the cleanest
+	// example of distillation in the project.
+	async trainMixerNN() {
+		const hidden  = +document.getElementById('nnHidden').value;
+		const epochs  = Math.max(50, +document.getElementById('nnEpochs').value);
+		const samples = +document.getElementById('nnSamples').value;
+		const lr      = +document.getElementById('nnLR').value;
+		const stats   = document.getElementById('mixerNNStats');
+
+		const mlp = new MLP(2, hidden, 1);
+		const mixerGains = this.ui.readCascadeGains().mixer;
+		stats.textContent = `training: 0/${epochs}, ${samples} random/epoch, ${mlp.paramCount()} params`;
+		this.ui.log(this.tSim, `training mixer NN (${hidden} hidden, ${mlp.paramCount()} params)`);
+
+		const lossHistory = [];
+		const t0 = performance.now();
+		await this.nnTrainer.trainMixer({
+			mlp, mixerGains, epochs, samplesPerEpoch: samples, lr, momentum: 0.9,
+			onProgress: (e, loss) => {
+				lossHistory.push(loss);
+				stats.textContent = `epoch ${e + 1}/${epochs}	loss=${loss.toExponential(3)}`;
+				this.drawLossPlot(lossHistory);
+			},
+		});
+		const dt = (performance.now() - t0) / 1000;
+
+		this.mixerMlp = mlp;
+		this.stack.mixer.setMode('nn', mlp);
+		document.getElementById('mixer_mode').value = 'nn';
+		const finalLoss = lossHistory.at(-1);
+		stats.textContent = `done: loss=${finalLoss.toExponential(3)}	(${dt.toFixed(1)}s) — using NN`;
+		this.ui.log(this.tSim, `mixer NN trained: final loss=${finalLoss.toExponential(3)} in ${dt.toFixed(1)}s, switched to NN`);
 	}
 
 	// Train a small MLP to imitate the rule-based pitch arm of Attitude.
