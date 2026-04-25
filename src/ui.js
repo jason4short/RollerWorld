@@ -110,6 +110,48 @@ export class UI {
 
   readNavMode() { return document.getElementById('navMode').value; }
 
+  // Cascade gains — grouped by layer to mirror src/controllers/stack/.
+  // Each layer sees only its own group; the orchestrator never sees a flat
+  // bag. Mixer reuses Kvel/tiltLimit/a_max from the existing nav panel
+  // since they describe the same physical quantities.
+  readCascadeGains() {
+    return {
+      nav: {
+        v_max:              this.num('nav_v_max'),
+        a_max:              this.num('nav_a_max'),
+        linear_zone:        this.num('nav_linear_zone'),
+        lookahead:          this.num('nav_lookahead'),
+        yaw_disable_radius: this.num('yaw_disable_radius'),
+        Kp_nav:             this.num('Kp_nav'),
+        MaxYawRate:         this.num('MaxYawRate'),
+      },
+      mixer: {
+        Kvel:       this.num('nav_Kvel'),
+        tiltLimit:  this.num('nav_tiltLimit'),
+        a_max:      this.num('nav_a_max'),
+        vel_lpf_tc: 0.1,
+      },
+      attitude: {
+        pitch_P:      this.num('att_pitch_P'),
+        pitch_D:      this.num('att_pitch_D'),
+        pitch_I:      this.num('att_pitch_I'),
+        force_max:    this.num('att_force_max'),
+        heading_P:    this.num('att_heading_P'),
+        yaw_rate_max: this.num('att_yaw_rate_max'),
+        yaw_rate_P:   this.num('att_yaw_rate_P'),
+        torque_max:   this.num('att_torque_max'),
+      },
+      wheels: {
+        wheelbase:      this.num('wheelbase'),
+        force_P:        this.num('force_P'),
+        force_I:        this.num('force_I'),
+        force_I_max:    this.num('force_I_max'),
+        deadband_extra: this.num('deadband_extra'),
+        PWM_max:        this.num('PWM_max'),
+      },
+    };
+  }
+
   readRates() {
     return {
       outerHz:  this.num('outerHz'),
@@ -147,6 +189,12 @@ export class UI {
     'nav_linear_zone', 'nav_lookahead', 'nav_tiltLimit',
     // Nav (yaw)
     'Kheading', 'MaxYawRate', 'yaw_disable_radius', 'yaw_speed_softness',
+    // Cascade — Attitude pitch arm
+    'att_pitch_P', 'att_pitch_D', 'att_pitch_I', 'att_force_max',
+    // Cascade — Attitude yaw arm
+    'att_heading_P', 'att_yaw_rate_max', 'att_yaw_rate_P', 'att_torque_max',
+    // Cascade — Wheels
+    'wheelbase', 'force_P', 'force_I', 'force_I_max', 'deadband_extra',
     // disturbance
     'shoveOmega',
     // NN training

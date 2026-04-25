@@ -6,6 +6,7 @@ import { ArduBalanceController } from './controllers/ardubalance.js';
 import { NavController }				 from './controllers/nav.js';
 import { YawController }				 from './controllers/yaw.js';
 import { NNController }					from './controllers/nn.js';
+import { ControllerStack }				from './controllers/stack/index.js';
 import { MLP }									 from './nn/mlp.js';
 import { NNTrainer }						 from './nn/trainer.js';
 import { WorldRenderer3D }			 from './render/world-renderer-3d.js';
@@ -46,6 +47,8 @@ export class App {
 		this.controllerType 	= this.ui.readController();
 		this.nav 				= new NavController();
 		this.yawController 		= new YawController();
+		this.stack 				= new ControllerStack();
+		this._lastStackOut		= null;
 		this.calibrator 		= new MotorCalibrator({ dt: this.DT });
 		const joyEl 			= document.getElementById('joystick');
 		this.joystick 			= joyEl ? new Joystick(joyEl) : null;
@@ -121,9 +124,9 @@ export class App {
 	}
 
 	currentGains() {
-		return this.controllerType === 'ardubalance'
-			? this.ui.readArduGains()
-			: this.ui.readGains();
+		if (this.controllerType === 'ardubalance') return this.ui.readArduGains();
+		if (this.controllerType === 'cascade')     return null;   // cascade reads its own gains via readCascadeGains
+		return this.ui.readGains();
 	}
 
 	reset() {
@@ -138,6 +141,7 @@ export class App {
 		this.pilotYawRate = 0;
 		this.waypoints.length = 0;
 		for (const c of Object.values(this.controllers)) c.reset();
+		this.stack.reset();
 		this.sensors.reset();
 		this.measured		= null;
 		this.lastForce		= 0;
@@ -160,7 +164,9 @@ export class App {
 		this.renderer.draw(this.plant.state, this.plant.params, navTarget, queueRest);
 		const fRef = this.controllerType === 'ardubalance'
 			? this.motor.Km
-			: this.ui.readGains().Fmax;
+			: this.controllerType === 'cascade'
+				? this.ui.num('att_force_max')
+				: this.ui.readGains().Fmax;
 		const pwmRef = this.motor.PWM_max || 2000;
 		const series = this.buildPlotSeries(fRef, pwmRef);
 		this.plotter.draw(this.history, series);
@@ -193,6 +199,8 @@ export class App {
 			if (key === 'pwm')			scale = 1 / (pwmRef || 1);
 			if (key === 'pwm_nn')		scale = 1 / (pwmRef || 1);
 			if (key === 'pwm_residual') scale = 1 / (pwmRef || 1);
+			if (key === 'pwm_left')		scale = 1 / (pwmRef || 1);
+			if (key === 'pwm_right')	scale = 1 / (pwmRef || 1);
 			out.push({ key, color: colors[i], scale, label: info.label });
 		}
 		return out;
@@ -213,48 +221,73 @@ export class App {
 			Object.assign(this.motor, this.ui.readMotor());
 
 			const controller = this.currentController();
+			const isCascade  = this.controllerType === 'cascade';
 
 			// Nav outer-outer loop: if enabled, position error drives the tilt
 			// setpoint. Otherwise the pilot (arrow keys) drives it directly.
 			const navOn = this.ui.navEnabled();
-			
+
 			// Nav runs once per animation frame (~60 Hz). Approximate its dt from
 			// wall-clock elapsed so its internal LPF is rate-correct regardless
 			// of browser frame pacing.
 			const navDt = Math.max(0.001, Math.min(0.1, (ts - (this._lastNavTs || ts)) / 1000));
 			this._lastNavTs = ts;
-			
-			
-			// Input priority: FBW pilot (joystick) > nav waypoint > raw arrow tilt.
-			// FBW reuses nav.js's vel_lpf/Kvel braking math but takes its vel_desired
-			// directly from the stick, so centering the stick brakes hard.
-			const pilotMode = this.ui.readPilotMode();
-			let tiltSetpoint, yawRateSetpoint;
 
+
+			// Input priority: FBW pilot (joystick) > nav waypoint > raw arrow tilt.
+			// Two parallel routings:
+			//   Cascade controller       — pilot input → cascadeCommand, the stack handles the rest.
+			//   Legacy (ArduBalance/PID) — pilot input → tiltSetpoint + yawRateSetpoint.
+			const pilotMode = this.ui.readPilotMode();
+			let tiltSetpoint = 0, yawRateSetpoint = 0;
+			let cascadeCommand = null;
 
 			if (pilotMode === 'fbw' && this.joystick) {
 				const s		= this.joystick.value();
 				// Screen-up = forward, screen-right = turn right (negative
 				// yaw_rate, matching ArrowRight's sign convention).
 				const stick	= { fwd: s.y, yaw: -s.x };
-				const out	= this.nav.updateFbw(this.measured || this.plant.state,
-					stick, this.ui.readNavGains(), navDt);
-				tiltSetpoint	 = out.tilt;
-				yawRateSetpoint  = out.yaw_rate;
+				if (isCascade) {
+					cascadeCommand = { mode: 'fbw', stick };
+				} else {
+					const out	= this.nav.updateFbw(this.measured || this.plant.state,
+						stick, this.ui.readNavGains(), navDt);
+					tiltSetpoint	 = out.tilt;
+					yawRateSetpoint  = out.yaw_rate;
+				}
 
 			} else if (pilotMode === 'auto') {
-				const out = this.nav.update(this.measured || this.plant.state, this.ui.readNavGains(), navDt);
-				tiltSetpoint	 = out.tilt;
-				yawRateSetpoint  = out.yaw_rate;
+				if (isCascade) {
+					cascadeCommand = { mode: 'auto' };
+				} else {
+					const out = this.nav.update(this.measured || this.plant.state, this.ui.readNavGains(), navDt);
+					tiltSetpoint	 = out.tilt;
+					yawRateSetpoint  = out.yaw_rate;
+				}
 				this._advanceWaypointIfArrived();
 
 			} else {
-				tiltSetpoint	 = this.pilotTilt;
-				yawRateSetpoint  = this.pilotYawRate;
+				if (isCascade) {
+					// Arrow-key debug: bypass Mixer, drive Attitude's pitch_target
+					// directly. No velocity feedback in this mode — it's for
+					// tuning the Attitude layer in isolation.
+					cascadeCommand = {
+						mode:         'tilt',
+						pitch_target: this.pilotTilt,
+						yaw_target:   this.measured?.heading ?? 0,
+					};
+				} else {
+					tiltSetpoint	 = this.pilotTilt;
+					yawRateSetpoint  = this.pilotYawRate;
+				}
 			}
 
-			
-			if (controller instanceof ArduBalanceController) {
+			if (isCascade) {
+				// Single source of truth for the waypoint target — the legacy
+				// NavController owns `target_x/z`; the stack mirrors it.
+				this.stack.nav.target_x = this.nav.target_x;
+				this.stack.nav.target_z = this.nav.target_z;
+			} else if (controller instanceof ArduBalanceController) {
 				controller.target_angle = tiltSetpoint;
 			} else if (controller instanceof NNController) {
 				// NN swallows the velocity-tracking step; it takes vel_cart_target
@@ -274,51 +307,62 @@ export class App {
 					this.dueSensor += dtSensor;
 				}
 
-				// --- Outer attitude loop (runs at outerHz) ---
-				this.dueOuter -= this.DT;
-				if (this.dueOuter <= 0) {
-					// PID biases its error by the tilt setpoint; ArduBalance uses target_angle set above.
-					const measOuter = controller instanceof PIDController
-						? { ...this.measured, pitch: this.measured.pitch - tiltSetpoint }
-						: this.measured;
-					controller.updateVelocity(measOuter, gains, dtOuter);
-					this.dueOuter += dtOuter;
+				// --- Outer attitude loop (legacy controllers only — cascade
+				// is single-rate at innerHz; its layered structure already
+				// separates the timescales conceptually).
+				if (!isCascade) {
+					this.dueOuter -= this.DT;
+					if (this.dueOuter <= 0) {
+						// PID biases its error by the tilt setpoint; ArduBalance uses target_angle set above.
+						const measOuter = controller instanceof PIDController
+							? { ...this.measured, pitch: this.measured.pitch - tiltSetpoint }
+							: this.measured;
+						controller.updateVelocity(measOuter, gains, dtOuter);
+						this.dueOuter += dtOuter;
+					}
 				}
 
 				// --- Inner motor loop (runs at innerHz) — produces PWM/force, held by ZOH ---
 				this.dueInner -= this.DT;
 				if (this.dueInner <= 0) {
-					const measInner = controller instanceof PIDController
-						? { ...this.measured, pitch: this.measured.pitch - tiltSetpoint }
-						: this.measured;
-					this.lastForce = controller.produceForce(measInner, gains, dtInner, this.motor);
+					if (isCascade) {
+						const cgains = this.ui.readCascadeGains();
+						const out = this.stack.update(this.measured, cascadeCommand, cgains, this.motor, dtInner);
+						this.lastForce  = out.wheelOut.force_fwd_actual;
+						this.lastTauYaw = out.wheelOut.torque_yaw_actual;
+						this._lastStackOut = out;
+					} else {
+						const measInner = controller instanceof PIDController
+							? { ...this.measured, pitch: this.measured.pitch - tiltSetpoint }
+							: this.measured;
+						this.lastForce = controller.produceForce(measInner, gains, dtInner, this.motor);
 
-					// Yaw runs at the inner-loop rate too. Pilot sets the target rate;
-					// YawController applies P feedback to drive measured rate to target.
-					this.yawController.target_yaw_rate = yawRateSetpoint;
-					this.lastTauYaw = this.yawController.update(this.measured, this.ui.readYawGains());
+						// Yaw runs at the inner-loop rate too. Pilot sets the target rate;
+						// YawController applies P feedback to drive measured rate to target.
+						this.yawController.target_yaw_rate = yawRateSetpoint;
+						this.lastTauYaw = this.yawController.update(this.measured, this.ui.readYawGains());
 
-					// "Shadow" forward pass of the NN on the same sensor state —
-					// regardless of which controller is driving. Lets us plot what
-					// the NN would say alongside what the active controller said.
-					if (this.controllers.nn.mlp && controller !== this.controllers.nn) {
-						this.controllers.nn.vel_cart_target = this.nav.vel_desired_last ?? 0;
-						this.controllers.nn.produceForce(measInner, gains, dtInner, this.motor);
+						// "Shadow" forward pass of the NN on the same sensor state —
+						// regardless of which controller is driving. Lets us plot what
+						// the NN would say alongside what the active controller said.
+						if (this.controllers.nn.mlp && controller !== this.controllers.nn) {
+							this.controllers.nn.vel_cart_target = this.nav.vel_desired_last ?? 0;
+							this.controllers.nn.produceForce(measInner, gains, dtInner, this.motor);
+						}
+
+						// Record the (sensor → PWM) pair while ArduBalance is running.
+						// Ignore PID — we're distilling the cascaded controller specifically.
+						if (this.recorder.recording && controller instanceof ArduBalanceController) {
+							this.recorder.record({
+								pitch:           this.measured.pitch,
+								pitch_rate:      this.measured.pitch_rate,
+								vel_cart:        this.measured.vel_cart,
+								vel_cart_target: this.nav.vel_desired_last ?? 0,
+								pwm:             controller.lastPWM ?? 0,
+							});
+						}
 					}
-
 					this.dueInner += dtInner;
-
-					// Record the (sensor → PWM) pair while ArduBalance is running.
-					// Ignore PID — we're distilling the cascaded controller specifically.
-					if (this.recorder.recording && controller instanceof ArduBalanceController) {
-						this.recorder.record({
-							pitch:           this.measured.pitch,
-							pitch_rate:      this.measured.pitch_rate,
-							vel_cart:        this.measured.vel_cart,
-							vel_cart_target: this.nav.vel_desired_last ?? 0,
-							pwm:             controller.lastPWM ?? 0,
-						});
-					}
 				}
 
 				// Physics advances every DT with the last computed force held.
@@ -330,6 +374,17 @@ export class App {
 				const x_CoM_true = this.plant.state.x + params.L * sn;
 				const v_CoM_true = this.plant.state.vel_cart + params.L * cs * this.plant.state.pitch_rate;
 
+				// "Motor PWM" = whatever the active controller just commanded.
+				// Cascade has two motors — report the larger-magnitude one for a
+				// scalar trace; per-wheel PWMs are also exposed below.
+				const stackOut = this._lastStackOut?.wheelOut;
+				const cascadePwm = stackOut
+					? (Math.abs(stackOut.pwm_left) > Math.abs(stackOut.pwm_right) ? stackOut.pwm_left : stackOut.pwm_right)
+					: 0;
+				const activePwm = isCascade
+					? cascadePwm
+					: (this.controllers[this.controllerType]?.lastPWM ?? 0);
+
 				this.history.push({
 					t:				this.tSim,
 					pitch:			this.plant.state.pitch,
@@ -339,19 +394,21 @@ export class App {
 					x_CoM:			x_CoM_true,
 					v_CoM:			v_CoM_true,
 					F:		 		this.lastForce,
-					// "Motor PWM" = whatever the active controller just commanded.
-					pwm:			this.controllers[this.controllerType].lastPWM ?? 0,
+					pwm:			activePwm,
 					// NN shadow is always the NN's output, regardless of who's driving.
 					pwm_nn:			this.controllers.nn.lastPWM ?? 0,
-					// Residual uses the active controller as the reference. When NN
-					// is active this is 0; meaningful when ArduBalance is the driver.
-					pwm_residual:	(this.controllers[this.controllerType].lastPWM ?? 0)
-										- (this.controllers.nn.lastPWM ?? 0),
+					pwm_residual:	activePwm - (this.controllers.nn.lastPWM ?? 0),
 					// vel_command only exists in ArduBalance — leave 0 otherwise.
 					vel_command:	this.controllers.ardubalance.vel_command ?? 0,
-					vel_desired: 		this.nav.vel_desired_last ?? 0,
-					err_x:		 	this.nav.err_last ?? 0,
-					tilt_sp:	 	tiltSetpoint,
+					vel_desired: 	this.nav.vel_desired_last ?? this.stack.mixer.vel_target ?? 0,
+					err_x:		 	this.nav.err_last ?? this.stack.nav.distance_err ?? 0,
+					tilt_sp:	 	isCascade ? (this.stack.mixer.pitch_target ?? 0) : tiltSetpoint,
+					// Cascade-specific traces (zero in legacy modes).
+					pitch_target:	this.stack.mixer.pitch_target ?? 0,
+					force_fwd:		this.stack.attitude.lastForceFwd ?? 0,
+					torque_yaw:		this.stack.attitude.lastTorqueYaw ?? 0,
+					pwm_left:		stackOut?.pwm_left  ?? 0,
+					pwm_right:		stackOut?.pwm_right ?? 0,
 				});
 				
 				if (this.history.length > 5000) this.history.shift();

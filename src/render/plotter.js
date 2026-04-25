@@ -66,6 +66,12 @@ export const PLOT_SIGNALS = {
 	pwm_residual: { label: 'NN residual: actual − NN',     scale: null },
 	vel_command:  { label: 'Balance v-command (±5)',       scale: 1 / 5 },
 	vel_desired:  { label: 'Nav target velocity (±3)',     scale: 1 / 3 },
-	err_x:     { label: 'Position error (±2 m)',    scale: 1 / 2 },
-	tilt_sp:   { label: 'Target tilt (±30°)',       scale: 1 / (Math.PI / 6) },
+	err_x:        { label: 'Position error (±2 m)',        scale: 1 / 2 },
+	tilt_sp:      { label: 'Target tilt (±30°)',           scale: 1 / (Math.PI / 6) },
+	// Cascade layers
+	pitch_target: { label: 'Mixer pitch target (±30°)',    scale: 1 / (Math.PI / 6) },
+	force_fwd:    { label: 'Attitude force (±60 N)',       scale: 1 / 60 },
+	torque_yaw:   { label: 'Attitude yaw torque (±2 N·m)', scale: 1 / 2 },
+	pwm_left:     { label: 'Wheels PWM left (±max)',       scale: null },
+	pwm_right:    { label: 'Wheels PWM right (±max)',      scale: null },
 };

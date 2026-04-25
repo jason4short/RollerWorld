@@ -187,14 +187,40 @@
     <h2>Controller</h2>
     <label>Type
       <select id="ctrlType" style="grid-column: span 1">
-        <option value="ardubalance" selected>ArduBalance (cascaded)</option>
+        <option value="cascade" selected>Cascade (Nav→Mixer→Attitude→Wheels)</option>
+        <option value="ardubalance">ArduBalance (legacy reference)</option>
         <option value="pid">Idealized PID (force)</option>
         <option value="nn">Neural net (distilled)</option>
       </select>
     </label>
   </div>
 
-  <details class="panel" data-ctrl="pid" open>
+  <details class="panel" data-ctrl="cascade" open>
+    <summary>Attitude — pitch arm (force out)</summary>
+    <label>pitch_P (N/rad)        <input type="number" id="att_pitch_P"   value="80"  step="2"></label>
+    <label>pitch_D (N·s/rad)      <input type="number" id="att_pitch_D"   value="6"   step="0.5"></label>
+    <label>pitch_I (auto-trim)    <input type="number" id="att_pitch_I"   value="0"   step="0.01"></label>
+    <label>force_max (N)          <input type="number" id="att_force_max" value="60"  step="5"></label>
+  </details>
+
+  <details class="panel" data-ctrl="cascade">
+    <summary>Attitude — yaw arm (torque out)</summary>
+    <label>heading_P (rad/s per rad) <input type="number" id="att_heading_P"    value="2"   step="0.2"></label>
+    <label>yaw_rate_max (rad/s)      <input type="number" id="att_yaw_rate_max" value="1.5" step="0.1"></label>
+    <label>yaw_rate_P (N·m·s/rad)    <input type="number" id="att_yaw_rate_P"   value="0.5" step="0.05"></label>
+    <label>torque_max (N·m)          <input type="number" id="att_torque_max"   value="2"   step="0.1"></label>
+  </details>
+
+  <details class="panel" data-ctrl="cascade">
+    <summary>Wheels — force tracker</summary>
+    <label>wheelbase (m)         <input type="number" id="wheelbase"      value="0.48" step="0.01"></label>
+    <label>force_P (PWM/N)       <input type="number" id="force_P"        value="20"   step="1"></label>
+    <label>force_I (PWM/(N·s))   <input type="number" id="force_I"        value="200"  step="10"></label>
+    <label>force_I_max (PWM)     <input type="number" id="force_I_max"    value="500"  step="50"></label>
+    <label>extra deadband (PWM)  <input type="number" id="deadband_extra" value="0"    step="5"></label>
+  </details>
+
+  <details class="panel" data-ctrl="pid">
     <summary>PID gains (force out)</summary>
     <label>Kp <input type="number" id="Kp" value="800" step="10"></label>
     <label>Ki <input type="number" id="Ki" value="0" step="0.5"></label>
