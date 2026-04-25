@@ -373,10 +373,17 @@ export class App {
 				const start = this.measured ?? this.plant.state;
 				const startPos = { x: start.x, z: start.z ?? 0 };
 
+				// Validity check uses a SMALLER pad than the planner. The
+				// planner inflates walls by 0.6 to keep proposed paths well
+				// clear; once the bot is on such a path, asking "is the
+				// current segment still drivable?" only needs bot-radius
+				// margin (≈0.2). Otherwise the bot can't drive any corridor
+				// narrower than 1.2 m without constantly invalidating its
+				// own path on ground it has already mapped.
 				let pathBlocked = false;
 				let prev = startPos;
 				for (const wp of this.waypoints) {
-					if (!this.occupancyGrid.hasLineOfSight(prev, wp, 0.6)) {
+					if (!this.occupancyGrid.hasLineOfSight(prev, wp, 0.2)) {
 						pathBlocked = true; break;
 					}
 					prev = wp;
