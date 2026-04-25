@@ -18,7 +18,7 @@ import { ArduBalanceController } from '../controllers/ardubalance.js';
 export class NNTrainer {
 	constructor() {
 		// Input normalization — divide by expected max, bringing values to ±1.
-		//            th,             w,      x,      v,     target_angle,     dv
+		//          pitch,         pitch_rate,  x,    v,     target_angle,        dv
 		this.inScale  = [1 / (Math.PI / 3), 1 / 10, 1 / 5, 1 / 3, 1 / (Math.PI / 6), 1 / 10];
 		this.outScale = 1 / 2000;   // normalize PWM to ±1
 
@@ -26,12 +26,12 @@ export class NNTrainer {
 		// Wider than the teacher's steady-state envelope so the NN learns the
 		// full response surface.
 		this.ranges = {
-			th:           [-Math.PI / 3, Math.PI / 3],   // ±60°
-			w:            [-10, 10],                       // ±10 rad/s
-			x:            [-5, 5],                          // ±5 m
-			v:            [-3, 3],                          // ±3 m/s
+			pitch:        [-Math.PI / 3, Math.PI / 3],   // ±60°
+			pitch_rate:   [-10, 10],                     // ±10 rad/s
+			x:            [-5, 5],                       // ±5 m
+			v:            [-3, 3],                       // ±3 m/s
 			target_angle: [-Math.PI / 6, Math.PI / 6],   // ±30°
-			dv:           [-10, 10],                       // cart accel, ±10 m/s²
+			dv:           [-10, 10],                     // cart accel, ±10 m/s²
 		};
 	}
 
@@ -47,7 +47,12 @@ export class NNTrainer {
 		ab.last_vmeas   = state.v - state.dv * dt;
 		// Put the LPF at the instantaneous value so speed_d_lpf = raw_d = -dv.
 		ab.speed_d_lpf  = -state.dv;
-		const sensors = { th: state.th, w: state.w, x: state.x, v: state.v };
+		const sensors = {
+			pitch:      state.pitch,
+			pitch_rate: state.pitch_rate,
+			x:          state.x,
+			v:          state.v,
+		};
 		ab.updateVelocity(sensors, gains, dt);
 		ab.produceForce(sensors, gains, dt, motor);
 		return ab.lastPWM;
@@ -60,8 +65,8 @@ export class NNTrainer {
 		const r = (lo, hi) => lo + Math.random() * (hi - lo);
 		for (let i = 0; i < n; i++) {
 			const state = {
-				th:           r(...this.ranges.th),
-				w:            r(...this.ranges.w),
+				pitch:        r(...this.ranges.pitch),
+				pitch_rate:   r(...this.ranges.pitch_rate),
 				x:            r(...this.ranges.x),
 				v:            r(...this.ranges.v),
 				target_angle: r(...this.ranges.target_angle),
@@ -69,8 +74,8 @@ export class NNTrainer {
 			};
 			const pwm = this.queryTeacher(state, gains, motor, dt);
 			const row = new Float64Array(6);
-			row[0] = state.th           * this.inScale[0];
-			row[1] = state.w            * this.inScale[1];
+			row[0] = state.pitch        * this.inScale[0];
+			row[1] = state.pitch_rate   * this.inScale[1];
 			row[2] = state.x            * this.inScale[2];
 			row[3] = state.v            * this.inScale[3];
 			row[4] = state.target_angle * this.inScale[4];
@@ -87,7 +92,7 @@ export class NNTrainer {
 		const inputs  = new Array(data.length);
 		const targets = new Array(data.length);
 		for (let n = 0; n < data.length; n++) {
-			const src  = data[n].inputs;           // [th, w, x, v, target_angle]
+			const src  = data[n].inputs;           // [pitch, pitch_rate, x, v, target_angle]
 			const prev = n > 0 ? data[n - 1].inputs : src;
 			const dv   = (src[3] - prev[3]) / dt;
 			const row  = new Float64Array(6);

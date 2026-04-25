@@ -10,17 +10,17 @@ export class ExperimentRunner {
 
   runTrial(params, gains, { th0 = 6, duration = 10, noise = 0 } = {}) {
     const plant = new Pendulum(params);
-    plant.setState({ x: 0, v: 0, th: th0 * Math.PI / 180, w: 0 });
+    plant.setState({ x: 0, v: 0, pitch: th0 * Math.PI / 180, pitch_rate: 0 });
     const pid = new PIDController();
     let t = 0, fell = false, iae = 0;
     while (t < duration) {
       const s = plant.state;
-      const measured = { ...s, th: s.th + (Math.random() * 2 - 1) * noise };
+      const measured = { ...s, pitch: s.pitch + (Math.random() * 2 - 1) * noise };
       const F = pid.update(measured, gains, this.dt);
-      plant.step(F, this.dt);
+      plant.step(F, 0, this.dt);
       t += this.dt;
-      iae += Math.abs(plant.state.th) * this.dt;
-      if (Math.abs(plant.state.th) > Math.PI / 2) { fell = true; break; }
+      iae += Math.abs(plant.state.pitch) * this.dt;
+      if (Math.abs(plant.state.pitch) > Math.PI / 2) { fell = true; break; }
     }
     return { survived: t, fell, iae };
   }

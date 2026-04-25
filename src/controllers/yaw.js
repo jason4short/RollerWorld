@@ -8,7 +8,7 @@
 // On a real two-wheel bot, yaw torque is realized by a differential PWM
 // between left and right wheels. We model it directly as a torque here for
 // simplicity; if you want the per-wheel detail, the differential is
-// (tau_yaw / wheelbase) of force per side.
+// (yaw_torque / wheelbase) of force per side.
 
 export class YawController {
 	constructor() {
@@ -21,10 +21,10 @@ export class YawController {
 	// gains: { Kyaw, MaxTauYaw }
 	update(sensors, gains) {
 		const { Kyaw, MaxTauYaw } = gains;
-		let tau = Kyaw * (this.target_yaw_rate - sensors.yawRate);
-		if (tau >  MaxTauYaw) tau =  MaxTauYaw;
-		if (tau < -MaxTauYaw) tau = -MaxTauYaw;
-		this.lastTorque = tau;
-		return tau;
+		let yaw_torque = Kyaw * (this.target_yaw_rate - sensors.yaw_rate);
+		if (yaw_torque >  MaxTauYaw) yaw_torque =  MaxTauYaw;
+		if (yaw_torque < -MaxTauYaw) yaw_torque = -MaxTauYaw;
+		this.lastTorque = yaw_torque;
+		return yaw_torque;
 	}
 }

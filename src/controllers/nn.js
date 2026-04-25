@@ -10,7 +10,7 @@ export class NNController {
 		this.lastPWM      = 0;
 		this.last_v       = 0;                  // for finite-differencing dv/dt
 		// These must match NNTrainer's normalization (and order).
-		//           th,              w,      x,      v,     target_angle,        dv
+		//          pitch,         pitch_rate,  x,    v,     target_angle,        dv
 		this.inScale  = [1 / (Math.PI / 3), 1 / 10, 1 / 5, 1 / 3, 1 / (Math.PI / 6), 1 / 10];
 		this.outScale = 2000;   // denormalize NN output → PWM
 	}
@@ -32,11 +32,11 @@ export class NNController {
 		const dv = (sensors.v - this.last_v) / dt;
 		this.last_v = sensors.v;
 
-		const xPos = sensors.x_body ?? sensors.x;
+		const x_pos = sensors.x_body ?? sensors.x;
 		const x = [
-			sensors.th           * this.inScale[0],
-			sensors.w            * this.inScale[1],
-			xPos                 * this.inScale[2],
+			sensors.pitch        * this.inScale[0],
+			sensors.pitch_rate   * this.inScale[1],
+			x_pos                * this.inScale[2],
 			sensors.v            * this.inScale[3],
 			this.target_angle    * this.inScale[4],
 			dv                   * this.inScale[5],

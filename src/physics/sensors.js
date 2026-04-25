@@ -54,18 +54,18 @@ export class Sensors {
 		const z = plantState.z;
 		const v = speed;   // body-frame velocity (encoder-quantized)
 
-		const th = plantState.th + this._randn() * cfg.imu_noise;
-		const w  = plantState.w  + this._randn() * cfg.gyro_noise;
+		const pitch      = plantState.pitch      + this._randn() * cfg.imu_noise;
+		const pitch_rate = plantState.pitch_rate + this._randn() * cfg.gyro_noise;
 
-		// CoM position in world (small-θ correction); useful for 1D nav,
+		// CoM position in world (small-pitch correction); useful for 1D nav,
 		// kept for backward compat though 2D nav uses x/z directly.
-		const cs = Math.cos(th);
-		const sn = Math.sin(th);
+		const cs = Math.cos(pitch);
+		const sn = Math.sin(pitch);
 		const x_CoM = x + L * sn;
-		const v_CoM = v + L * cs * w;
+		const v_CoM = v + L * cs * pitch_rate;
 
-		const psi     = plantState.psi;
-		const yawRate = plantState.yawRate + this._randn() * cfg.gyro_noise;
+		const heading  = plantState.heading;
+		const yaw_rate = plantState.yaw_rate + this._randn() * cfg.gyro_noise;
 
 		// `x_body` is the integrated body-frame distance the wheel encoder
 		// has actually measured — independent of heading. The pitch
@@ -73,6 +73,6 @@ export class Sensors {
 		// doesn't leave a stale world-x error pulling the bot over.
 		const x_body = this.bodyDistance;
 
-		return { x, v, th, w, x_CoM, v_CoM, psi, yawRate, z, x_body };
+		return { x, v, pitch, pitch_rate, x_CoM, v_CoM, heading, yaw_rate, z, x_body };
 	}
 }

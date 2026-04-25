@@ -6,16 +6,16 @@
 //   c.updateVelocity(sensors, gains, dt)   // no-op for single-rate PID
 //   c.produceForce(sensors, gains, dt, motor)  → force (N) on cart
 //
-// sensors: { x, v, th, w }        quantized/noisy measurements from Sensors
+// sensors: { x, v, pitch, pitch_rate }   quantized/noisy measurements from Sensors
 // gains:   { Kp, Ki, Kd, Kx, Kv, Fmax }
 
 export class PIDController {
   constructor() {
-    this.I = 0;
+    this.pitch_integral = 0;
   }
 
   reset() {
-    this.I = 0;
+    this.pitch_integral = 0;
   }
 
   // Single-rate controller — outer loop is a no-op; all work happens in
@@ -24,18 +24,18 @@ export class PIDController {
 
   update(state, gains, dt) {
     const { Kp, Ki, Kd, Kx, Kv, Fmax } = gains;
-    this.I += state.th * dt;
+    this.pitch_integral += state.pitch * dt;
 
-    // F = +(Kp·θ + Kd·θ̇ + Ki·∫θ) + (Kx·x + Kv·ẋ)
-    // With +θ = bob tilting in +x direction, catching the lean requires
+    // F = +(Kp·pitch + Kd·pitch_rate + Ki·∫pitch) + (Kx·x + Kv·ẋ)
+    // With +pitch = bob tilting in +x direction, catching the lean requires
     // pushing the cart in +x (+F). Angle loop dominates; cart-position
     // terms keep the bot from drifting.
     // Position term uses encoder-measured body-frame distance (`x_body`)
     // not world-frame `x` — otherwise yawing leaves a stale world-x error
     // that the controller can't reduce by leaning along the new heading.
-    const xPos = state.x_body ?? state.x;
-    let F = (Kp * state.th + Kd * state.w + Ki * this.I)
-          + (Kx * xPos + Kv * state.v);
+    const x_pos = state.x_body ?? state.x;
+    let F = (Kp * state.pitch + Kd * state.pitch_rate + Ki * this.pitch_integral)
+          + (Kx * x_pos + Kv * state.v);
 
     if (F >  Fmax) F =  Fmax;
     if (F < -Fmax) F = -Fmax;

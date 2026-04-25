@@ -131,8 +131,8 @@ export class App {
 		this.plant.params = this.ui.readParams();
 		this.plant.setState({
 			x: 0, z: 0, v: 0,
-			th: th0 * Math.PI / 180, w: 0,
-			psi: 0, yawRate: 0,
+			pitch: th0 * Math.PI / 180, pitch_rate: 0,
+			heading: 0, yaw_rate: 0,
 		});
 		this.lastTauYaw = 0;
 		this.pilotYawRate = 0;
@@ -169,7 +169,7 @@ export class App {
 
 	populatePlotMenus() {
 		const keys = Object.keys(PLOT_SIGNALS);
-		const defaults = ['th', 'v', 'v_desired'];	 // sensible for nav debugging
+		const defaults = ['pitch', 'v', 'v_desired'];	 // sensible for nav debugging
 		for (let i = 0; i < 3; i++) {
 			const sel = document.getElementById(`plot${i + 1}`);
 			sel.innerHTML = '<option value="none">(none)</option>' +
@@ -235,17 +235,17 @@ export class App {
 			if (pilotMode === 'fbw' && this.joystick) {
 				const s		= this.joystick.value();
 				// Screen-up = forward, screen-right = turn right (negative
-				// yawRate, matching ArrowRight's sign convention).
+				// yaw_rate, matching ArrowRight's sign convention).
 				const stick	= { fwd: s.y, yaw: -s.x };
 				const out	= this.nav.updateFbw(this.measured || this.plant.state,
 					stick, this.ui.readNavGains(), navDt);
 				tiltSetpoint	 = out.tilt;
-				yawRateSetpoint  = out.yawRate;
+				yawRateSetpoint  = out.yaw_rate;
 
 			} else if (pilotMode === 'auto') {
 				const out = this.nav.update(this.measured || this.plant.state, this.ui.readNavGains(), navDt);
 				tiltSetpoint	 = out.tilt;
-				yawRateSetpoint  = out.yawRate;
+				yawRateSetpoint  = out.yaw_rate;
 				this._advanceWaypointIfArrived();
 
 			} else {
@@ -276,7 +276,7 @@ export class App {
 				if (this.dueOuter <= 0) {
 					// PID biases its error by the tilt setpoint; ArduBalance uses target_angle set above.
 					const measOuter = controller instanceof PIDController
-						? { ...this.measured, th: this.measured.th - tiltSetpoint }
+						? { ...this.measured, pitch: this.measured.pitch - tiltSetpoint }
 						: this.measured;
 					controller.updateVelocity(measOuter, gains, dtOuter);
 					this.dueOuter += dtOuter;
@@ -286,7 +286,7 @@ export class App {
 				this.dueInner -= this.DT;
 				if (this.dueInner <= 0) {
 					const measInner = controller instanceof PIDController
-						? { ...this.measured, th: this.measured.th - tiltSetpoint }
+						? { ...this.measured, pitch: this.measured.pitch - tiltSetpoint }
 						: this.measured;
 					this.lastForce = controller.produceForce(measInner, gains, dtInner, this.motor);
 
@@ -309,12 +309,12 @@ export class App {
 					// Ignore PID — we're distilling the cascaded controller specifically.
 					if (this.recorder.recording && controller instanceof ArduBalanceController) {
 						this.recorder.record({
-							th:					 this.measured.th,
-							w:						this.measured.w,
-							x:						this.measured.x,
-							v:						this.measured.v,
+							pitch:        this.measured.pitch,
+							pitch_rate:   this.measured.pitch_rate,
+							x:            this.measured.x,
+							v:            this.measured.v,
 							target_angle: controller.target_angle,
-							pwm:					controller.lastPWM ?? 0,
+							pwm:          controller.lastPWM ?? 0,
 						});
 					}
 				}
@@ -323,15 +323,15 @@ export class App {
 				this.plant.step(this.lastForce, this.lastTauYaw, this.DT);
 				this.tSim += this.DT;
 				// CoM computation for plotting (true state, not sensor-filtered).
-				const cs = Math.cos(this.plant.state.th);
-				const sn = Math.sin(this.plant.state.th);
+				const cs = Math.cos(this.plant.state.pitch);
+				const sn = Math.sin(this.plant.state.pitch);
 				const x_CoM_true = this.plant.state.x + params.L * sn;
-				const v_CoM_true = this.plant.state.v + params.L * cs * this.plant.state.w;
+				const v_CoM_true = this.plant.state.v + params.L * cs * this.plant.state.pitch_rate;
 
 				this.history.push({
 					t:				this.tSim,
-					th:				this.plant.state.th,
-					w:				this.plant.state.w,
+					pitch:			this.plant.state.pitch,
+					pitch_rate:		this.plant.state.pitch_rate,
 					x:				this.plant.state.x,
 					v:				this.plant.state.v,
 					x_CoM:			x_CoM_true,
@@ -355,7 +355,7 @@ export class App {
 				if (this.history.length > 5000) this.history.shift();
 				this.acc -= this.DT;
 
-				if (Math.abs(this.plant.state.th) > Math.PI / 2) {
+				if (Math.abs(this.plant.state.pitch) > Math.PI / 2) {
 					this.running = false;
 					this.ui.log(this.tSim, `fell at t=${this.tSim.toFixed(2)}s`);
 					document.getElementById('btnRun').textContent = 'Start';
@@ -390,9 +390,9 @@ export class App {
 		};
 
 		document.getElementById('btnPush').onclick = () => {
-			const w = this.ui.num('shoveOmega');
-			this.plant.state.w += w;
-			this.ui.log(this.tSim, `shove: +${w.toFixed(1)} rad/s tip`);
+			const shove_rate = this.ui.num('shoveOmega');
+			this.plant.state.pitch_rate += shove_rate;
+			this.ui.log(this.tSim, `shove: +${shove_rate.toFixed(1)} rad/s tip`);
 		};
 
 		document.getElementById('btnExp').onclick = () => this.sweepKp();

@@ -47,7 +47,7 @@ export class WorldRenderer {
     // body (tilted)
     ctx.save();
     ctx.translate(cx_px, cy_px);
-    ctx.rotate(state.th);
+    ctx.rotate(state.pitch);
     const L_px = L * this.pxPerM;
     ctx.strokeStyle = '#bbb'; ctx.lineWidth = 3;
     for (const dx of [-16, 16]) {

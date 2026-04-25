@@ -33,8 +33,8 @@ export class ArduBalanceController {
     const { bal_P, bal_D, bal_I, p_vel } = gains;
 
     // Apply learned sensor offset so the controller sees "true" tilt.
-    const theta     = sensors.th + this.balance_offset;
-    const angle_err = theta - this.target_angle;
+    const pitch     = sensors.pitch + this.balance_offset;
+    const angle_err = pitch - this.target_angle;
 
     // Auto-trim the IMU zero: slowly integrate angle error WHEN quiet (near
     // upright and not being driven). The original firmware gated this on
@@ -54,7 +54,7 @@ export class ArduBalanceController {
     //
     // Combined effect: vel_command = PD(angle) + p_vel · v_measured.
     // See produceForce() for what the p_vel term actually controls.
-    this.vel_command = bal_P * angle_err + bal_D * sensors.w + p_vel * sensors.v;
+    this.vel_command = bal_P * angle_err + bal_D * sensors.pitch_rate + p_vel * sensors.v;
   }
 
   // ------------------------------------------------------------------------
@@ -83,8 +83,8 @@ export class ArduBalanceController {
     // cleanly filters the 100 Hz sensor boundaries at 400 Hz inner rate.
     const raw_d = -(sensors.v - this.last_vmeas) / dt;
     this.last_vmeas = sensors.v;
-    const tau = 0.02;
-    const alpha = dt / (tau + dt);
+    const time_constant = 0.02;
+    const alpha = dt / (time_constant + dt);
     this.speed_d_lpf = (1 - alpha) * this.speed_d_lpf + alpha * raw_d;
 
     // Feed-forward from the PWM table (calibrated) or linear fallback

@@ -54,9 +54,9 @@ export class Plotter {
 // Available signals — key maps to a frame field written in App.tick().
 // scale is 1/(max plottable value) so ±max fills half the canvas.
 export const PLOT_SIGNALS = {
-	th:        { label: 'Tilt angle (±60°)',        scale: 1 / (Math.PI / 3) },
-	w:         { label: 'Tilt rate (±6 rad/s)',     scale: 1 / 6 },
-	x:         { label: 'Cart position (±2 m)',     scale: 1 / 2 },
+	pitch:      { label: 'Tilt angle (±60°)',        scale: 1 / (Math.PI / 3) },
+	pitch_rate: { label: 'Tilt rate (±6 rad/s)',     scale: 1 / 6 },
+	x:          { label: 'Cart position (±2 m)',     scale: 1 / 2 },
 	v:         { label: 'Wheel/cart velocity (±3 m/s)', scale: 1 / 3 },
 	v_CoM:     { label: 'Body (CoM) velocity (±3 m/s)', scale: 1 / 3 },
 	x_CoM:     { label: 'Body (CoM) position (±2 m)',   scale: 1 / 2 },
