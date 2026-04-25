@@ -190,7 +190,6 @@ export class App {
 		const series = this.buildPlotSeries(fRef, pwmRef);
 		this.plotter.draw(this.history, series);
 		this.drawPanelPlots(pwmRef);
-		this.drawCascadeFlow();
 		this._syncJoystickVisibility();
 	}
 
@@ -214,129 +213,6 @@ export class App {
 		setActive('btnPilotAuto',  mode === 'auto');
 	}
 
-	// Animated diagram of the cascade. Four rooms stacked top-down with
-	// arrows between them; each room shows its current input/output
-	// values, and each arrow fades between layer firings — so the visitor
-	// can SEE the rate hierarchy (Nav's arrow holds dim while Wheels'
-	// arrow stays bright).
-	drawCascadeFlow() {
-		const cv = document.getElementById('cascadeFlow');
-		if (!cv || this.controllerType !== 'cascade') return;
-		const ctx = cv.getContext('2d');
-		const W = cv.width, H = cv.height;
-		ctx.fillStyle = '#0a0a0a'; ctx.fillRect(0, 0, W, H);
-
-		const fmt    = (v, d = 2) => (v == null || Number.isNaN(v)) ? '–' : v.toFixed(d);
-		const fmtDeg = v => fmt(v * 180 / Math.PI, 1) + '°';
-
-		const stack = this.stack;
-		const navOut   = stack.navOut   ?? {};
-		const mixerOut = stack.mixerOut ?? {};
-		const attOut   = stack.attOut   ?? {};
-		const wheelOut = stack.wheelOut ?? {};
-
-		// Per-layer "freshness": 0 = just fired (bright), 1 = stale (dim).
-		const fresh = (t, dt) => Math.max(0, Math.min(1, t / dt));
-		const layers = [
-			{
-				name:  'Nav',
-				rate:  stack.rates.nav,
-				stale: fresh(stack.tNav,      stack.dtNav),
-				lines: [
-					`vel_target = ${fmt(navOut.vel_target_body, 2)} m/s`,
-					`heading_t  = ${fmtDeg(navOut.heading_target ?? 0)}`,
-				],
-			},
-			{
-				name:  'Mixer',
-				rate:  stack.rates.mixer,
-				stale: fresh(stack.tMixer,    stack.dtMixer),
-				lines: [
-					`vel_lpf      = ${fmt(stack.mixer.vel_lpf, 2)} m/s`,
-					`pitch_target = ${fmtDeg(mixerOut.pitch_target ?? 0)}`,
-				],
-			},
-			{
-				name:  'Attitude',
-				rate:  stack.rates.attitude,
-				stale: fresh(stack.tAttitude, stack.dtAttitude),
-				lines: [
-					`force_fwd  = ${fmt(attOut.force_fwd, 1)} N`,
-					`torque_yaw = ${fmt(attOut.torque_yaw, 2)} N·m`,
-				],
-			},
-			{
-				name:  'Wheels',
-				rate:  stack.rates.wheels,
-				stale: fresh(stack.tWheels,   stack.dtWheels),
-				lines: [
-					`pwm_L = ${fmt(wheelOut.pwm_left, 0)}`,
-					`pwm_R = ${fmt(wheelOut.pwm_right, 0)}`,
-				],
-			},
-		];
-
-		const boxH  = 60, boxW = W - 24, boxX = 12, gap = 16;
-		const arrowMid = (y) => y + boxH + (gap / 2);
-		let y = 8;
-
-		for (let i = 0; i < layers.length; i++) {
-			const layer = layers[i];
-
-			// Box: subtle border, dark fill. The layer is "live" right after
-			// firing; dim it as it ages toward its next tick.
-			const liveness = 1 - layer.stale;   // 1 just fired → 0 stale
-			const borderShade = Math.round(80 + 120 * liveness);
-			ctx.fillStyle   = '#141414';
-			ctx.strokeStyle = `rgb(${borderShade}, ${borderShade}, ${borderShade})`;
-			ctx.lineWidth   = 1;
-			ctx.fillRect  (boxX, y, boxW, boxH);
-			ctx.strokeRect(boxX, y, boxW, boxH);
-
-			// Title + rate
-			ctx.fillStyle = '#9bf';
-			ctx.font = 'bold 12px ui-monospace';
-			ctx.fillText(layer.name, boxX + 8, y + 16);
-			ctx.fillStyle = '#666';
-			ctx.font = '10px ui-monospace';
-			const rateLabel = `${layer.rate} Hz`;
-			const rw = ctx.measureText(rateLabel).width;
-			ctx.fillText(rateLabel, boxX + boxW - rw - 8, y + 16);
-
-			// Value lines
-			ctx.fillStyle = '#cdcdcd';
-			ctx.font = '11px ui-monospace';
-			layer.lines.forEach((line, j) => {
-				ctx.fillText(line, boxX + 8, y + 34 + j * 13);
-			});
-
-			// Arrow to next layer — color fades with the *next* layer's
-			// staleness, since the arrow represents data flowing into it.
-			if (i < layers.length - 1) {
-				const nextStale = layers[i + 1].stale;
-				const c = Math.round(180 - 130 * nextStale);   // bright→dim
-				const ax = W / 2;
-				const y0 = y + boxH;
-				const y1 = arrowMid(y) + (gap / 2) - 2;
-				ctx.strokeStyle = `rgb(${c}, ${c}, ${c})`;
-				ctx.lineWidth   = 1.5;
-				ctx.beginPath();
-				ctx.moveTo(ax, y0);
-				ctx.lineTo(ax, y1 - 5);
-				ctx.stroke();
-				// Arrowhead
-				ctx.fillStyle = `rgb(${c}, ${c}, ${c})`;
-				ctx.beginPath();
-				ctx.moveTo(ax - 5, y1 - 5);
-				ctx.lineTo(ax + 5, y1 - 5);
-				ctx.lineTo(ax,     y1 + 1);
-				ctx.closePath();
-				ctx.fill();
-			}
-
-			y += boxH + gap;
-		}
-	}
 
 	// Inset plots inside each cascade panel. Each shows the few signals
 	// that layer produces or consumes, scaled so a healthy controller
