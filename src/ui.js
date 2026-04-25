@@ -200,12 +200,13 @@ export class UI {
     // disturbance
     'shoveOmega',
     'disturbForceImpulse', 'disturbTauImpulse', 'disturbImuBias',
-    // NN training
-    'nnHidden', 'nnEpochs', 'nnSamples', 'nnLR',
+    // NN training params (nnHidden, nnEpochs, nnSamples, nnLR) intentionally
+    // omitted — those are session-level workbench settings, not bot tunings.
+    // Same for the per-layer NN mode selects (pitch_arm_mode etc.) — they
+    // depend on whether the user has trained an NN this session.
   ];
 
-  static TUNING_SELECT_IDS = ['ctrlType', 'navMode', 'nnMode', 'pilotMode',
-    'pitch_arm_mode', 'mixer_mode', 'yaw_arm_mode', 'wheels_mode', 'nav_mode_nn'];
+  static TUNING_SELECT_IDS = ['ctrlType', 'navMode', 'pilotMode'];
 
   // Snapshot of every tuning-relevant input. All input IDs are kept
   // verbatim, so writeAll() is a clean inverse of readAll().
@@ -223,11 +224,16 @@ export class UI {
   }
 
   writeAll(t) {
+    // Only write fields the schema knows about — older saved tunings or
+    // imported JSON may contain extra keys (e.g., nnEpochs, mixer_mode)
+    // that should NOT clobber the user's current workbench settings.
+    const allowedNumeric = new Set(UI.TUNING_NUMERIC_IDS);
+    const allowedSelect  = new Set(UI.TUNING_SELECT_IDS);
     for (const [k, v] of Object.entries(t)) {
-      if (UI.TUNING_SELECT_IDS.includes(k)) {
+      if (allowedSelect.has(k)) {
         const el = document.getElementById(k);
         if (el) { el.value = v; el.dispatchEvent(new Event('change')); }
-      } else {
+      } else if (allowedNumeric.has(k)) {
         this.setNum(k, v);
       }
     }
