@@ -100,9 +100,12 @@ export class ControllerStack {
 		if (tiltMode) {
 			// Pilot sets the angle target directly; refreshed every tick so
 			// stick changes propagate without waiting for a Mixer firing.
+			// heading_rate_ff lets the Attitude yaw arm rotate smoothly
+			// between integrated-target updates instead of stepping.
 			this.mixerOut = {
-				pitch_target: command.pitch_target ?? 0,
-				yaw_target:   command.yaw_target   ?? 0,
+				pitch_target:    command.pitch_target    ?? 0,
+				yaw_target:      command.yaw_target      ?? 0,
+				heading_rate_ff: command.heading_rate_ff ?? 0,
 			};
 		}
 

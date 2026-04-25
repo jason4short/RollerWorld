@@ -87,7 +87,13 @@ export class Nav {
 		this.distance_err   = out.distance_err;
 		this.heading_err    = out.heading_err;
 		this.vel_target_last = out.vel_target_body;
-		return { vel_target_body: out.vel_target_body, heading_target: out.heading_target };
+		// heading_rate_ff = 0 in auto mode: the bot tracks heading_target by
+		// closing heading_err; the implicit rate is small and the PD handles it.
+		return {
+			vel_target_body: out.vel_target_body,
+			heading_target:  out.heading_target,
+			heading_rate_ff: 0,
+		};
 	}
 
 	// Stateless Auto-mode logic. Same single-source-of-truth pattern as the
@@ -150,13 +156,20 @@ export class Nav {
 		this.heading_err     = heading_err;
 		this.distance_err    = Math.sqrt(dx * dx + dz * dz);   // fallback: unsigned
 		this.vel_target_last = vel_target_body;
-		return { vel_target_body, heading_target };
+		return { vel_target_body, heading_target, heading_rate_ff: 0 };
 	}
 
 	// ── Fly-by-wire mode ───────────────────────────────────────────────────
 	// stick.fwd, stick.yaw ∈ [-1, 1]
 	// Heading is integrated from stick.yaw; the bot has no absolute heading
 	// reference in FBW (no waypoint), so we maintain our own.
+	//
+	// heading_rate_ff: the rate we're integrating into the reference. Attitude
+	// uses this as a feedforward term so the bot rotates smoothly between
+	// Nav firings instead of stepping (Nav at 60 Hz, Attitude at 100 Hz —
+	// without FF the heading_target was a 60 Hz staircase and Attitude would
+	// catch up in a few ms then idle until the next step, producing a
+	// rotate-stop-rotate stutter while the user held the yaw stick).
 	updateFbw(sensors, stick, gains, dt) {
 		const vel_target = (stick.fwd ?? 0) * gains.v_max;
 
@@ -166,7 +179,11 @@ export class Nav {
 		this.vel_target_last = vel_target;
 		this.heading_err     = 0;
 		this.distance_err    = 0;
-		return { vel_target_body: vel_target, heading_target: this.fbw_heading_ref };
+		return {
+			vel_target_body: vel_target,
+			heading_target:  this.fbw_heading_ref,
+			heading_rate_ff: yaw_rate_cmd,
+		};
 	}
 
 	// ── Tilt mode (debug, no nav at all) ───────────────────────────────────

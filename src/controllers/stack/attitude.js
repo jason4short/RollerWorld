@@ -78,13 +78,15 @@ export class Attitude {
 		this.lastYawRateRef = 0;
 	}
 
-	// mixerOut: { pitch_target, yaw_target }
+	// mixerOut: { pitch_target, yaw_target, heading_rate_ff }
 	// sensors:  { pitch, pitch_rate, heading, yaw_rate }
 	// gains:    pitch arm:  { pitch_P, pitch_D, pitch_I, force_max }
 	//           yaw arm:    { heading_P, yaw_rate_max, yaw_rate_P, torque_max }
 	update(mixerOut, sensors, gains, dt) {
 		const force_fwd  = this._pitchArm(mixerOut.pitch_target, sensors, gains, dt);
-		const torque_yaw = this._yawArm  (mixerOut.yaw_target,   sensors, gains);
+		const torque_yaw = this._yawArm  (
+			mixerOut.yaw_target, mixerOut.heading_rate_ff ?? 0, sensors, gains,
+		);
 		this.lastForceFwd  = force_fwd;
 		this.lastTorqueYaw = torque_yaw;
 		return { force_fwd, torque_yaw };
@@ -154,25 +156,42 @@ export class Attitude {
 
 	// Yaw: heading_err → desired yaw rate (P, clamped) → torque (P on rate
 	// error, clamped). Standard angle-then-rate cascade.
-	_yawArm(yaw_target, sensors, gains) {
+	//
+	// heading_rate_ff is a feedforward term: the rate the upstream layer is
+	// already commanding (e.g., FBW stick.yaw). Adding `yaw_rate_P · ff` to
+	// the controller output is equivalent to including ff in yaw_rate_ref —
+	// it keeps the bot rotating smoothly between Nav firings even though
+	// Nav's heading_target is a 60 Hz staircase. Without FF, Attitude
+	// catches each step in a few ms then idles, producing a stutter.
+	_yawArm(yaw_target, heading_rate_ff, sensors, gains) {
 		let heading_err = yaw_target - sensors.heading;
 		while (heading_err >  Math.PI) heading_err -= 2 * Math.PI;
 		while (heading_err < -Math.PI) heading_err += 2 * Math.PI;
 		this.lastHeadingErr = heading_err;
 
 		// Track diagnostic for plotting (matches old field for compat).
-		const { heading_P, yaw_rate_max } = gains;
+		const { heading_P, yaw_rate_max, yaw_rate_P, torque_max } = gains;
 		let ref = heading_P * heading_err;
 		if (ref >  yaw_rate_max) ref =  yaw_rate_max;
 		if (ref < -yaw_rate_max) ref = -yaw_rate_max;
 		this.lastYawRateRef = ref;
 
+		// Inner P-on-rate-error: rule or NN computes the torque from heading_err
+		// + yaw_rate. Either way we add the FF term outside, so the rule/NN
+		// stays a 2-input function the trainer can imitate.
+		let torque;
 		if (this.yawArmMode === 'nn' && this.yawArmMlp) {
-			return this._yawArmNN(heading_err, sensors.yaw_rate, gains);
+			torque = this._yawArmNN(heading_err, sensors.yaw_rate, gains);
+		} else {
+			torque = Attitude.computeYawArmRule(
+				{ heading_err, yaw_rate: sensors.yaw_rate }, gains,
+			);
 		}
-		return Attitude.computeYawArmRule(
-			{ heading_err, yaw_rate: sensors.yaw_rate }, gains,
-		);
+
+		torque += yaw_rate_P * heading_rate_ff;
+		if (torque >  torque_max) torque =  torque_max;
+		if (torque < -torque_max) torque = -torque_max;
+		return torque;
 	}
 
 	// Stateless yaw-arm math. Same single-source-of-truth pattern as the

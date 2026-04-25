@@ -455,12 +455,14 @@ export class App {
 
 				if (isCascade) {
 					// Arrow-key debug: bypass Mixer, drive Attitude's pitch_target
-					// directly. Yaw target comes from the integrated arrow-key
-					// rate so ←/→ actually turns the bot.
+					// directly. Yaw target is the integrated arrow-key rate;
+					// heading_rate_ff carries the instantaneous rate so the bot
+					// rotates smoothly between browser frames instead of stepping.
 					cascadeCommand = {
-						mode:         'tilt',
-						pitch_target: this.pilotTilt,
-						yaw_target:   this.pilotYawHeadingRef,
+						mode:            'tilt',
+						pitch_target:    this.pilotTilt,
+						yaw_target:      this.pilotYawHeadingRef,
+						heading_rate_ff: this.pilotYawRate,
 					};
 				} else {
 					tiltSetpoint	 = this.pilotTilt;
