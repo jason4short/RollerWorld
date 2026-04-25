@@ -2,8 +2,7 @@
 
 export class UI {
   constructor() {
-    this.logEl   = document.getElementById('log');
-    this.statsEl = document.getElementById('stats');
+    this.logEl = document.getElementById('log');
   }
 
   num(id) { return +document.getElementById(id).value; }
@@ -234,12 +233,4 @@ export class UI {
     }
   }
 
-  setStats(t, s, pilotTilt = 0) {
-    const pilot = pilotTilt !== 0
-      ? `   pilot=${(pilotTilt * 180 / Math.PI).toFixed(1)}°`
-      : '';
-    this.statsEl.textContent =
-      `t=${t.toFixed(2)}s   pitch=${(s.pitch * 180 / Math.PI).toFixed(1)}°   ` +
-      `x=${s.x.toFixed(2)}m   v=${s.vel_cart.toFixed(2)}${pilot}`;
-  }
 }

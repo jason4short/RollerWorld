@@ -12,7 +12,6 @@ import { NNTrainer }						 from './nn/trainer.js';
 import { WorldRenderer3D }			 from './render/world-renderer-3d.js';
 import { Plotter, PLOT_SIGNALS } from './render/plotter.js';
 import { UI }										from './ui.js';
-import { ExperimentRunner }			from './experiment.js';
 import { Recorder }							from './recorder.js';
 import { PRESETS }							 from './presets.js';
 import { MotorCalibrator }			 from './calibration.js';
@@ -69,7 +68,6 @@ export class App {
 			yaw:    new Plotter(document.getElementById('plotAttYaw'),   3),
 			wheels: new Plotter(document.getElementById('plotWheels'),   3),
 		};
-		this.experiment 		= new ExperimentRunner(this.DT);
 
 		this.running 	= false;
 		this.tSim		= 0;
@@ -193,7 +191,6 @@ export class App {
 		this.drawPanelPlots(pwmRef);
 		this.drawCascadeFlow();
 		this._syncJoystickVisibility();
-		this.ui.setStats(this.tSim, this.plant.state, this.pilotTilt);
 	}
 
 	// Show the overlay joystick only when the pilot is actually using it
@@ -741,8 +738,6 @@ export class App {
 				this.ui.log(this.tSim, `IMU bias on: +${(this.imuBiasInjected * 180 / Math.PI).toFixed(1)}°`);
 			}
 		};
-
-		document.getElementById('btnExp').onclick = () => this.sweepKp();
 
 		// Recorder UI
 		const recBtn	 = document.getElementById('btnRecord');
@@ -1428,20 +1423,4 @@ export class App {
 		}
 	}
 
-	sweepKp() {
-		this.ui.log(this.tSim, '--- sweep Kp from 10 to 260 ---');
-		const params = this.ui.readParams();
-		const gains	= this.ui.readGains();
-		const init	 = this.ui.readInit();
-		const values = [];
-		for (let v = 10; v <= 260; v += 20) values.push(v);
-		const results = this.experiment.sweep(
-			'Kp', values, params, gains,
-			{ th0: init.th0, noise: init.noise, duration: 10 },
-			r => this.ui.log(this.tSim,
-				`Kp=${r.Kp}	t=${r.survived.toFixed(2)}s	IAE=${r.iae.toFixed(3)}	${r.fell ? 'FELL' : 'ok'}`),
-		);
-		const best = results.filter(r => !r.fell).sort((a, b) => a.iae - b.iae)[0];
-		if (best) this.ui.log(this.tSim, `best Kp=${best.Kp} (IAE=${best.iae.toFixed(3)})`);
-	}
 }
