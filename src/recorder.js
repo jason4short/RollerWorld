@@ -65,6 +65,15 @@ export class Recorder {
 		});
 	}
 
+	// Cascade Attitude yaw arm: heading_err + yaw_rate → torque.
+	recordCascadeYaw({ heading_err, yaw_rate, torque_yaw }) {
+		if (!this.recording) return;
+		this.data.push({
+			kind: 'cascade_yaw',
+			heading_err, yaw_rate, torque_yaw,
+		});
+	}
+
 	// Bulk serialize — useful for offline training or inspection.
 	toJSON() {
 		return JSON.stringify({

@@ -536,6 +536,11 @@ export class App {
 								pitch_target: this.stack.mixer.pitch_target,
 								force_fwd:    this.stack.attitude.lastForceFwd,
 							});
+							this.recorder.recordCascadeYaw({
+								heading_err: this.stack.attitude.lastHeadingErr,
+								yaw_rate:    this.measured.yaw_rate,
+								torque_yaw:  this.stack.attitude.lastTorqueYaw,
+							});
 						}
 					} else {
 						const measInner = controller instanceof PIDController
@@ -758,6 +763,19 @@ export class App {
 			}
 			this.stack.mixer.setMode(mode, mlp);
 			this.ui.log(this.tSim, `mixer: ${mode}`);
+		};
+
+		document.getElementById('btnTrainYawNN').onclick = () => this.trainAttitudeYawNN();
+		document.getElementById('yaw_arm_mode').onchange = e => {
+			const mode = e.target.value;
+			const mlp = this.attitudeYawMlp ?? null;
+			if (mode === 'nn' && !mlp) {
+				this.ui.log(this.tSim, 'no trained yaw NN yet — staying on rule');
+				e.target.value = 'rule';
+				return;
+			}
+			this.stack.attitude.setYawArm(mode, mlp);
+			this.ui.log(this.tSim, `yaw arm: ${mode}`);
 		};
 
 		document.getElementById('btnCalibrate').onclick = () => this.calibrateMotor();
@@ -1050,6 +1068,48 @@ export class App {
 		const finalLoss = lossHistory.at(-1);
 		stats.textContent = `done: loss=${finalLoss.toExponential(3)}	(${dt.toFixed(1)}s) — using NN`;
 		this.ui.log(this.tSim, `mixer NN trained: final loss=${finalLoss.toExponential(3)} in ${dt.toFixed(1)}s, switched to NN`);
+	}
+
+	async trainAttitudeYawNN() {
+		const hidden  = +document.getElementById('nnHidden').value;
+		const epochs  = Math.max(50, +document.getElementById('nnEpochs').value);
+		const samples = +document.getElementById('nnSamples').value;
+		const lr      = +document.getElementById('nnLR').value;
+		const stats   = document.getElementById('yawNNStats');
+
+		const mode = document.getElementById('nnMode').value;
+		const recordedCount = this.recorder.count('cascade_yaw');
+		if (mode === 'recorded' && recordedCount < 50) {
+			this.ui.log(this.tSim, `need more recorded cascade_yaw samples (have ${recordedCount}, want ≥50)`);
+			return;
+		}
+
+		const mlp = new MLP(2, hidden, 1);
+		const attGains = this.ui.readCascadeGains().attitude;
+		const srcDesc = mode === 'random' ? `${samples} random/epoch` : `${recordedCount} recorded`;
+		stats.textContent = `training (${mode}): 0/${epochs}, ${srcDesc}, ${mlp.paramCount()} params`;
+		this.ui.log(this.tSim, `training yaw-arm NN (${mode}, ${hidden} hidden, ${mlp.paramCount()} params)`);
+
+		const lossHistory = [];
+		const t0 = performance.now();
+		await this.nnTrainer.trainAttitudeYaw({
+			mlp, attGains,
+			mode, data: this.recorder.data,
+			epochs, samplesPerEpoch: samples, lr, momentum: 0.9,
+			onProgress: (e, loss) => {
+				lossHistory.push(loss);
+				stats.textContent = `epoch ${e + 1}/${epochs}	loss=${loss.toExponential(3)}`;
+				this.drawLossPlot(lossHistory);
+			},
+		});
+		const dt = (performance.now() - t0) / 1000;
+
+		this.attitudeYawMlp = mlp;
+		this.stack.attitude.setYawArm('nn', mlp);
+		document.getElementById('yaw_arm_mode').value = 'nn';
+		const finalLoss = lossHistory.at(-1);
+		stats.textContent = `done: loss=${finalLoss.toExponential(3)}	(${dt.toFixed(1)}s) — using NN`;
+		this.ui.log(this.tSim, `yaw-arm NN trained: final loss=${finalLoss.toExponential(3)} in ${dt.toFixed(1)}s, switched to NN`);
 	}
 
 	// Train a small MLP to imitate the rule-based pitch arm of Attitude.

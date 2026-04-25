@@ -35,7 +35,9 @@
 // it's a clean cascade and there's not much to learn there.
 
 const PITCH_ARM_INPUT_SCALES  = [1 / (Math.PI / 3), 1 / 10, 1 / (Math.PI / 6)];
-const PITCH_ARM_OUTPUT_SCALE  = 60;   // ±1 → ±60 N (matches typical force_max)
+const PITCH_ARM_OUTPUT_SCALE  = 60;          // ±1 → ±60 N (matches typical force_max)
+const YAW_ARM_INPUT_SCALES    = [1 / Math.PI, 1 / 10];   // heading_err (±π), yaw_rate
+const YAW_ARM_OUTPUT_SCALE    = 2;             // ±1 → ±2 N·m (matches typical torque_max)
 
 export class Attitude {
 	constructor() {
@@ -43,10 +45,13 @@ export class Attitude {
 		this.lastForceFwd   = 0;   // diagnostics
 		this.lastTorqueYaw  = 0;
 		this.lastYawRateRef = 0;
+		this.lastHeadingErr = 0;
 
-		// Pitch arm pluggability: 'rule' (PD + auto-trim) or 'nn' (MLP).
+		// Per-arm pluggability: 'rule' (hand-written) or 'nn' (MLP).
 		this.pitchArmMode = 'rule';
 		this.pitchArmMlp  = null;
+		this.yawArmMode   = 'rule';
+		this.yawArmMlp    = null;
 	}
 
 	setPitchArm(mode, mlp = null) {
@@ -54,10 +59,17 @@ export class Attitude {
 		this.pitchArmMlp  = mlp;
 	}
 
+	setYawArm(mode, mlp = null) {
+		this.yawArmMode = mode;
+		this.yawArmMlp  = mlp;
+	}
+
 	// Normalization shared with the trainer — the layer and the trainer
 	// must agree on input/output scaling or the network is meaningless.
 	static get PITCH_ARM_INPUT_SCALES()  { return PITCH_ARM_INPUT_SCALES; }
-	static get PITCH_ARM_OUTPUT_SCALE() { return PITCH_ARM_OUTPUT_SCALE; }
+	static get PITCH_ARM_OUTPUT_SCALE()  { return PITCH_ARM_OUTPUT_SCALE; }
+	static get YAW_ARM_INPUT_SCALES()    { return YAW_ARM_INPUT_SCALES; }
+	static get YAW_ARM_OUTPUT_SCALE()    { return YAW_ARM_OUTPUT_SCALE; }
 
 	reset() {
 		this.balance_offset = 0;
@@ -143,20 +155,47 @@ export class Attitude {
 	// Yaw: heading_err → desired yaw rate (P, clamped) → torque (P on rate
 	// error, clamped). Standard angle-then-rate cascade.
 	_yawArm(yaw_target, sensors, gains) {
-		const { heading_P, yaw_rate_max, yaw_rate_P, torque_max } = gains;
-
 		let heading_err = yaw_target - sensors.heading;
 		while (heading_err >  Math.PI) heading_err -= 2 * Math.PI;
 		while (heading_err < -Math.PI) heading_err += 2 * Math.PI;
+		this.lastHeadingErr = heading_err;
 
+		// Track diagnostic for plotting (matches old field for compat).
+		const { heading_P, yaw_rate_max } = gains;
+		let ref = heading_P * heading_err;
+		if (ref >  yaw_rate_max) ref =  yaw_rate_max;
+		if (ref < -yaw_rate_max) ref = -yaw_rate_max;
+		this.lastYawRateRef = ref;
+
+		if (this.yawArmMode === 'nn' && this.yawArmMlp) {
+			return this._yawArmNN(heading_err, sensors.yaw_rate, gains);
+		}
+		return Attitude.computeYawArmRule(
+			{ heading_err, yaw_rate: sensors.yaw_rate }, gains,
+		);
+	}
+
+	// Stateless yaw-arm math. Same single-source-of-truth pattern as the
+	// pitch arm — rule branch and trainer both call this.
+	static computeYawArmRule({ heading_err, yaw_rate }, gains) {
+		const { heading_P, yaw_rate_max, yaw_rate_P, torque_max } = gains;
 		let yaw_rate_ref = heading_P * heading_err;
 		if (yaw_rate_ref >  yaw_rate_max) yaw_rate_ref =  yaw_rate_max;
 		if (yaw_rate_ref < -yaw_rate_max) yaw_rate_ref = -yaw_rate_max;
-		this.lastYawRateRef = yaw_rate_ref;
-
-		let torque = yaw_rate_P * (yaw_rate_ref - sensors.yaw_rate);
+		let torque = yaw_rate_P * (yaw_rate_ref - yaw_rate);
 		if (torque >  torque_max) torque =  torque_max;
 		if (torque < -torque_max) torque = -torque_max;
+		return torque;
+	}
+
+	_yawArmNN(heading_err, yaw_rate, gains) {
+		const inScale = YAW_ARM_INPUT_SCALES;
+		const x = [heading_err * inScale[0], yaw_rate * inScale[1]];
+		const y = this.yawArmMlp.forward(x);
+		let torque = y[0] * YAW_ARM_OUTPUT_SCALE;
+		const tmax = gains.torque_max;
+		if (torque >  tmax) torque =  tmax;
+		if (torque < -tmax) torque = -tmax;
 		return torque;
 	}
 }

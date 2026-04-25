@@ -238,6 +238,68 @@ export class NNTrainer {
 		return { inputs, targets };
 	}
 
+	// ── Attitude yaw-arm distillation ─────────────────────────────────────
+	// Inputs: heading_err (wrapped to ±π), yaw_rate. Output: torque_yaw.
+	// Even simpler than the pitch arm — no auto-trim, just an angle→rate→
+	// torque cascade with two clamps.
+
+	generateAttitudeYawBatch(n, attGains) {
+		const inScale  = Attitude.YAW_ARM_INPUT_SCALES;
+		const outScale = 1 / Attitude.YAW_ARM_OUTPUT_SCALE;
+		const r = (lo, hi) => lo + Math.random() * (hi - lo);
+
+		const inputs  = new Array(n);
+		const targets = new Array(n);
+		for (let i = 0; i < n; i++) {
+			const heading_err = r(-Math.PI, Math.PI);
+			const yaw_rate    = r(-10, 10);
+			const torque = Attitude.computeYawArmRule(
+				{ heading_err, yaw_rate }, attGains,
+			);
+			const row = new Float64Array(2);
+			row[0] = heading_err * inScale[0];
+			row[1] = yaw_rate    * inScale[1];
+			inputs[i]  = row;
+			targets[i] = [torque * outScale];
+		}
+		return { inputs, targets };
+	}
+
+	prepareAttitudeYawRecorded(data) {
+		const inScale  = Attitude.YAW_ARM_INPUT_SCALES;
+		const outScale = 1 / Attitude.YAW_ARM_OUTPUT_SCALE;
+		const rows = data.filter(d => d.kind === 'cascade_yaw');
+		const inputs  = new Array(rows.length);
+		const targets = new Array(rows.length);
+		for (let i = 0; i < rows.length; i++) {
+			const r = rows[i];
+			const row = new Float64Array(2);
+			row[0] = r.heading_err * inScale[0];
+			row[1] = r.yaw_rate    * inScale[1];
+			inputs[i]  = row;
+			targets[i] = [r.torque_yaw * outScale];
+		}
+		return { inputs, targets };
+	}
+
+	async trainAttitudeYaw({ mlp, attGains, mode = 'random', data = null,
+	                         epochs = 1000, samplesPerEpoch = 1000,
+	                         lr = 0.02, momentum = 0.9, onProgress }) {
+		const losses = [];
+		const recorded = mode === 'recorded' ? this.prepareAttitudeYawRecorded(data) : null;
+
+		for (let e = 0; e < epochs; e++) {
+			const batch = recorded ?? this.generateAttitudeYawBatch(samplesPerEpoch, attGains);
+			const loss  = mlp.trainEpoch(batch.inputs, batch.targets, lr, momentum);
+			losses.push(loss);
+			if (onProgress && (e % 5 === 0 || e === epochs - 1)) {
+				onProgress(e, loss);
+				await new Promise(r => setTimeout(r, 0));
+			}
+		}
+		return losses;
+	}
+
 	async trainAttitudePitch({ mlp, attGains, mode = 'random', data = null,
 	                           epochs = 1000, samplesPerEpoch = 1000,
 	                           lr = 0.02, momentum = 0.9, onProgress }) {
