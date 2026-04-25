@@ -327,7 +327,10 @@ export class App {
 				const s		= this.joystick.value();
 				// Screen-up = forward, screen-right = turn right (negative
 				// yaw_rate, matching ArrowRight's sign convention).
-				const stick	= { fwd: s.y, yaw: -s.x };
+				// Yaw scaled down — full stick is too aggressive on a balance
+				// bot, easier to drive with a softer turning rate.
+				const FBW_YAW_SCALE = 0.25;
+				const stick	= { fwd: s.y, yaw: -s.x * FBW_YAW_SCALE };
 				if (isCascade) {
 					cascadeCommand = { mode: 'fbw', stick };
 				} else {
