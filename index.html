@@ -16,6 +16,10 @@
   details.panel > summary::before { content:'▸ '; color:#555; }
   details.panel[open] > summary { margin-bottom: 6px; }
   details.panel[open] > summary::before { content:'▾ '; color:#555; }
+  #tabBar { display:flex; gap:4px; margin-bottom:10px; }
+  #tabBar .tab-btn { flex:1; background:#222; color:#888; padding:8px 0; font-size:12px;
+                     text-transform:uppercase; letter-spacing:.08em; border-radius:4px; }
+  #tabBar .tab-btn.active { background:#2a4; color:#fff; }
   label { display:grid; grid-template-columns: 1fr 60px; gap:6px; align-items:center; margin:4px 0; font-variant-numeric: tabular-nums; }
   input[type=range] { width: 100%; }
   input[type=number] { width: 60px; background:#222; color:#ddd; border:1px solid #333; padding:2px 4px; }
@@ -108,8 +112,12 @@
 </div>
 
 <div>
+  <div id="tabBar">
+    <button class="tab-btn active" data-tab="control">Control</button>
+    <button class="tab-btn"        data-tab="sim">Sim</button>
+  </div>
 
-  <details class="panel">
+  <details class="panel" data-tab="sim">
     <summary>Disturbances — make life hard</summary>
     <p style="font-size:11px; color:#888; margin: 0 0 6px 0">
       Inject impulses or biases to test disturbance rejection. A recorded-mode NN
@@ -135,7 +143,7 @@
     </div>
   </details>
 
-  <details class="panel" open>
+  <details class="panel" data-tab="control" open>
     <summary>Yaw control</summary>
     <label>Kyaw (N·m per rad/s) <input type="number" id="Kyaw"      value="4"   step="0.5"></label>
     <label>Max yaw torque (N·m) <input type="number" id="MaxTauYaw" value="6"   step="0.5"></label>
@@ -145,7 +153,7 @@
   </details>
 
 
-  <details class="panel" open>
+  <details class="panel" data-tab="control" open>
     <summary>Navigation</summary>
     <label>Enable <input type="checkbox" id="navEnabled"></label>
     <label>Target x (m)  <input type="number" id="navTargetX" value="0" step="0.1"></label>
@@ -174,7 +182,7 @@
     <label>Tilt limit (rad)     <input type="number" id="nav_tiltLimit" value="0.25" step="0.01"></label>
   </details>
 
-  <div class="panel">
+  <div class="panel" data-tab="sim">
     <h2>Preset</h2>
     <div class="row">
       <button class="alt" data-preset="arduroller">ArduRoller</button>
@@ -182,7 +190,7 @@
     </div>
   </div>
 
-  <div class="panel">
+  <div class="panel" data-tab="control">
     <h2>Tunings</h2>
     <div class="row">
       <button id="btnSaveTuning" class="alt">Save…</button>
@@ -193,7 +201,7 @@
     <div id="savedTunings" style="margin-top:6px; font-size:12px"></div>
   </div>
 
-  <details class="panel">
+  <details class="panel" data-tab="sim">
     <summary>Physics</summary>
     <label>Wheel+frame mass M <input type="number" id="M" value="1.0" step="0.1"></label>
     <label>Body mass m <input type="number" id="m" value="1.5" step="0.1"></label>
@@ -208,7 +216,7 @@
     <label>Noise (rad) <input type="number" id="noise" value="0" step="0.001"></label>
   </details>
 
-  <div class="panel">
+  <div class="panel" data-tab="control">
     <h2>Controller</h2>
     <label>Type
       <select id="ctrlType" style="grid-column: span 1">
@@ -220,7 +228,7 @@
     </label>
   </div>
 
-  <details class="panel" data-ctrl="cascade">
+  <details class="panel" data-tab="control" data-ctrl="cascade">
     <summary>Nav — world error → vel/heading targets</summary>
     <p style="font-size:11px; color:#888; margin: 0 0 6px 0">
       Auto-mode logic only. NN smooths the discrete deadzone/heading gates —
@@ -239,7 +247,7 @@
     <div id="navNNStats" style="font-size:11px; color:#888; margin-top:4px"></div>
   </details>
 
-  <details class="panel" data-ctrl="cascade" open>
+  <details class="panel" data-tab="control" data-ctrl="cascade" open>
     <summary>Cascade flow</summary>
     <p style="font-size:11px; color:#888; margin: 0 0 6px 0">
       Each tick, signals flow top-down through the layers. Arrow brightness
@@ -249,7 +257,7 @@
     <canvas id="cascadeFlow" width="280" height="320" style="width:100%; background:#0a0a0a; border:1px solid #222"></canvas>
   </details>
 
-  <details class="panel" data-ctrl="cascade">
+  <details class="panel" data-tab="control" data-ctrl="cascade">
     <summary>Mixer — velocity → tilt</summary>
     <p style="font-size:11px; color:#888; margin: 0 0 6px 0">
       Gains live in the Nav panel (Kvel, tiltLimit, a_max). This panel toggles
@@ -268,7 +276,7 @@
     <canvas id="plotMixer" width="260" height="70" style="margin-top:6px; width:100%; background:#0a0a0a; border:1px solid #222"></canvas>
   </details>
 
-  <details class="panel" data-ctrl="cascade" open>
+  <details class="panel" data-tab="control" data-ctrl="cascade" open>
     <summary>Attitude — pitch arm (force out)</summary>
     <label>pitch_P (N/rad)        <input type="number" id="att_pitch_P"   value="80"  step="2"></label>
     <label>pitch_D (N·s/rad)      <input type="number" id="att_pitch_D"   value="6"   step="0.5"></label>
@@ -287,7 +295,7 @@
     <canvas id="plotAttPitch" width="260" height="70" style="margin-top:6px; width:100%; background:#0a0a0a; border:1px solid #222"></canvas>
   </details>
 
-  <details class="panel" data-ctrl="cascade">
+  <details class="panel" data-tab="control" data-ctrl="cascade">
     <summary>Attitude — yaw arm (torque out)</summary>
     <label>heading_P (rad/s per rad) <input type="number" id="att_heading_P"    value="3"   step="0.2"></label>
     <label>yaw_rate_max (rad/s)      <input type="number" id="att_yaw_rate_max" value="6.0" step="0.5"></label>
@@ -306,7 +314,7 @@
     <canvas id="plotAttYaw" width="260" height="70" style="margin-top:6px; width:100%; background:#0a0a0a; border:1px solid #222"></canvas>
   </details>
 
-  <details class="panel" data-ctrl="cascade">
+  <details class="panel" data-tab="control" data-ctrl="cascade">
     <summary>Wheels — force tracker</summary>
     <label>wheelbase (m)         <input type="number" id="wheelbase"      value="0.48" step="0.01"></label>
     <label>force_P (PWM/N)       <input type="number" id="force_P"        value="20"   step="1"></label>
@@ -326,7 +334,7 @@
     <canvas id="plotWheels" width="260" height="70" style="margin-top:6px; width:100%; background:#0a0a0a; border:1px solid #222"></canvas>
   </details>
 
-  <details class="panel" data-ctrl="pid">
+  <details class="panel" data-tab="control" data-ctrl="pid">
     <summary>PID gains (force out)</summary>
     <label>Kp <input type="number" id="Kp" value="800" step="10"></label>
     <label>Ki <input type="number" id="Ki" value="0" step="0.5"></label>
@@ -336,7 +344,7 @@
     <label>Force limit (N) <input type="number" id="Fmax" value="60" step="1"></label>
   </details>
 
-  <details class="panel" data-ctrl="ardubalance" open>
+  <details class="panel" data-tab="control" data-ctrl="ardubalance" open>
     <summary>ArduBalance — outer loop</summary>
     <label>bal_P  (m/s per rad)   <input type="number" id="bal_P" value="120" step="5"></label>
     <label>bal_D  (m/s per rad/s) <input type="number" id="bal_D" value="1.0" step="0.1"></label>
@@ -344,7 +352,7 @@
     <label>p_vel  (speed fb)      <input type="number" id="p_vel" value="1.2" step="0.05"></label>
   </details>
 
-  <details class="panel" data-ctrl="ardubalance">
+  <details class="panel" data-tab="control" data-ctrl="ardubalance">
     <summary>ArduBalance — inner wheel PID</summary>
     <label>wheel_P    <input type="number" id="wheel_P"    value="600" step="10"></label>
     <label>wheel_I    <input type="number" id="wheel_I"    value="40"  step="1"></label>
@@ -353,7 +361,7 @@
     <label>Dead zone  <input type="number" id="dead_zone"  value="0"   step="5"></label>
   </details>
 
-  <details class="panel">
+  <details class="panel" data-tab="sim">
     <summary>Sensors &amp; Timing</summary>
     <label>Encoder ticks/rev  <input type="number" id="ticks_per_rev" value="815" step="1"></label>
     <label>IMU pitch noise (rad)  <input type="number" id="imu_noise" value="0.002" step="0.0005"></label>
@@ -365,7 +373,7 @@
     <label>Inner loop (Hz)  <input type="number" id="innerHz"  value="400" step="10"></label>
   </details>
 
-  <details class="panel">
+  <details class="panel" data-tab="sim">
     <summary>Motor</summary>
     <label>Km (N per duty)    <input type="number" id="Km"       value="80"   step="5"></label>
     <label>Kv (back-EMF N·s/m)<input type="number" id="Kv_motor" value="10"   step="0.5"></label>

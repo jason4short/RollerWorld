@@ -48,6 +48,7 @@ export class App {
 		this.yawController 		= new YawController();
 		this.stack 				= new ControllerStack();
 		this._lastStackOut		= null;
+		this.currentTab			= 'control';   // 'control' | 'sim'
 
 		// Disturbance state — biases / impulses injected by the Disturbances
 		// panel. Impulses are applied as instantaneous state kicks; bias is
@@ -694,11 +695,24 @@ export class App {
 		requestAnimationFrame(ts => this.tick(ts));
 	}
 
-	syncControllerPanels() {
-		for (const el of document.querySelectorAll('[data-ctrl]')) {
-			el.style.display = el.dataset.ctrl === this.controllerType ? '' : 'none';
+	// Sidebar visibility: a panel is shown iff its tab matches the active
+	// tab AND its data-ctrl (if any) matches the active controller type.
+	// Untagged panels are always visible (e.g., the Log).
+	syncSidebar() {
+		const tab  = this.currentTab ?? 'control';
+		const ctrl = this.controllerType;
+		for (const el of document.querySelectorAll('.panel')) {
+			const tabOk  = !el.dataset.tab  || el.dataset.tab === tab;
+			const ctrlOk = !el.dataset.ctrl || el.dataset.ctrl === ctrl;
+			el.style.display = (tabOk && ctrlOk) ? '' : 'none';
+		}
+		for (const btn of document.querySelectorAll('#tabBar .tab-btn')) {
+			btn.classList.toggle('active', btn.dataset.tab === tab);
 		}
 	}
+
+	// Back-compat alias — older call sites.
+	syncControllerPanels() { this.syncSidebar(); }
 
 	wireUI() {
 		document.getElementById('btnRun').onclick = e => {
@@ -711,6 +725,14 @@ export class App {
 			document.getElementById('btnRun').textContent = 'Start';
 			this.reset();
 		};
+
+		// Sidebar tab switcher (Control / Sim).
+		for (const btn of document.querySelectorAll('#tabBar .tab-btn')) {
+			btn.onclick = () => {
+				this.currentTab = btn.dataset.tab;
+				this.syncSidebar();
+			};
+		}
 
 		// Pilot mode buttons (canvas overlay). Angle and FBW are clickable;
 		// Auto is a status indicator that lights up only while waypoints
