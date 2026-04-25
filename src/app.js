@@ -63,7 +63,7 @@ export class App {
 		// cover the demo course with margin; cell size 0.25m matches the
 		// planner's grid resolution.
 		this.occupancyGrid		= new OccupancyGrid({
-			originX: -12, originZ: -3, width: 24, height: 11, cellSize: 0.25,
+			originX: -12, originZ: -6, width: 26, height: 14, cellSize: 0.25,
 		});
 		this._lastReplanT		= 0;
 		this.currentTab			= 'control';   // 'control' | 'sim'
@@ -168,10 +168,15 @@ export class App {
 	reset() {
 		const { th0 } = this.ui.readInit();
 		this.plant.params = this.ui.readParams();
+		// Spawn at the park's west-entrance node, heading toward the
+		// south-fork (node A → node B). Heading from world (dx, dz):
+		//   forward = (cos h, -sin h), so h = atan2(-dz, dx).
+		const SPAWN_X = -9, SPAWN_Z = -1;
+		const SPAWN_HEADING = Math.atan2(-(-3 - -1), (-3 - -9));   // ≈ 0.32 rad
 		this.plant.setState({
-			x: 0, z: 0, vel_cart: 0,
+			x: SPAWN_X, z: SPAWN_Z, vel_cart: 0,
 			pitch: th0 * Math.PI / 180, pitch_rate: 0,
-			heading: 0, yaw_rate: 0,
+			heading: SPAWN_HEADING, yaw_rate: 0,
 		});
 		this.lastTauYaw = 0;
 		this.pilotYawRate = 0;

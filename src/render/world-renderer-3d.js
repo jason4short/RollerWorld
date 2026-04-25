@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { Obstacles }     from '../world/obstacles.js';
+import { RoadNetwork }   from '../world/road-network.js';
 
 // 3D bot view using three.js. Same draw() interface as the 2D WorldRenderer:
 //   draw(state, params, navTargetX)
@@ -140,10 +141,20 @@ export class WorldRenderer3D {
 		this.lidarLines.visible = false;
 		this.scene.add(this.lidarLines);
 
-		// Obstacle course
+		// Obstacles — currently empty in the park world. The barrier-wall
+		// hook for blocked road edges will populate it. The Track / DemoCourse
+		// builders are still available on Obstacles if a lesson needs them.
 		this.obstacles = new Obstacles();
-		this.obstacles.loadTrack();
 		this.scene.add(this.obstacles.group);
+
+		// Park road network — eleven nodes, fourteen curved edges, three
+		// forks, two dead-end spurs. The renderer builds road meshes from
+		// the centerline samples; later phases will paint a ground texture
+		// from the same data and feed a color sensor on the bot.
+		this.roadNetwork = new RoadNetwork().loadPark();
+		this.roadGroup   = new THREE.Group();
+		this.scene.add(this.roadGroup);
+		this._buildRoadMeshes();
 	}
 
 	// Convert a canvas-relative click to world-frame ground (y=0) coords.
@@ -161,6 +172,63 @@ export class WorldRenderer3D {
 		if (!ray.ray.intersectPlane(plane, hit)) return null;
 		return { x: hit.x, z: hit.z };
 	}
+
+	// Build a flat ribbon mesh per road edge: two vertices per centerline
+	// sample (left edge, right edge, offset by roadWidth/2 perpendicular
+	// to the tangent), triangulated as a strip. Sits a hair above the
+	// ground (y=0.02) so it doesn't z-fight with the ground plane.
+	// Blocked edges are skipped — phase 1.5 will drop a barrier wall at
+	// their midpoint instead.
+	_buildRoadMeshes() {
+		while (this.roadGroup.children.length) {
+			this.roadGroup.remove(this.roadGroup.children[0]);
+		}
+		const SAMPLES = 32;
+		const half    = this.roadNetwork.width / 2;
+		const mat = new THREE.MeshStandardMaterial({
+			color: 0x3a2a20, roughness: 1.0, metalness: 0,
+		});
+
+		for (let ei = 0; ei < this.roadNetwork.edges.length; ei++) {
+			if (this.roadNetwork.edges[ei].blocked) continue;
+			const center = this.roadNetwork.sampleEdge(ei, SAMPLES);
+			const verts   = new Float32Array(center.length * 2 * 3);
+			const indices = [];
+
+			for (let i = 0; i < center.length; i++) {
+				const tx = center[i].tangent_x;
+				const tz = center[i].tangent_z;
+				// Perpendicular in the xz plane (90° CW so left edge is
+				// on the bot's left when traveling along the tangent).
+				const nx =  tz;
+				const nz = -tx;
+				const li = i * 6;
+				verts[li + 0] = center[i].x + nx * half;
+				verts[li + 1] = 0.02;
+				verts[li + 2] = center[i].z + nz * half;
+				verts[li + 3] = center[i].x - nx * half;
+				verts[li + 4] = 0.02;
+				verts[li + 5] = center[i].z - nz * half;
+			}
+			for (let i = 0; i < center.length - 1; i++) {
+				const a = 2 * i,       b = 2 * i + 1;
+				const c = 2 * (i + 1), d = 2 * (i + 1) + 1;
+				indices.push(a, b, d, a, d, c);
+			}
+
+			const geom = new THREE.BufferGeometry();
+			geom.setAttribute('position', new THREE.BufferAttribute(verts, 3));
+			geom.setIndex(indices);
+			geom.computeVertexNormals();
+			const mesh = new THREE.Mesh(geom, mat);
+			mesh.receiveShadow = true;
+			this.roadGroup.add(mesh);
+		}
+	}
+
+	// Public hook for re-rendering after the network changes (e.g. a
+	// caller flipped an edge's `blocked` flag to test "single loop" mode).
+	rebuildRoad() { this._buildRoadMeshes(); }
 
 	_buildBot() {
 		// Wheels: solid black, oversized (visual scale ~1.5× the physics R) to
