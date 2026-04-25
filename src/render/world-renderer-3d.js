@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { Obstacles }     from '../world/obstacles.js';
 import { RoadNetwork }   from '../world/road-network.js';
+import { heightAt }      from '../world/terrain.js';
 
 // 3D bot view using three.js. Same draw() interface as the 2D WorldRenderer:
 //   draw(state, params, navTargetX)
@@ -21,31 +22,58 @@ export class WorldRenderer3D {
 
 		this.scene = new THREE.Scene();
 		this.scene.background = new THREE.Color(0xee8855);
-		// No fog — Bruno-Simon look has crisp depth without atmospheric falloff.
+		// Atmospheric fog — distance hazes into the warm sky color, giving
+		// the park a sense of scale and softening the far horizon. Tuned
+		// so the bot's immediate surroundings (~30 m) are crisp and the
+		// far edges of the park dissolve into the sky.
+		this.scene.fog = new THREE.Fog(0xee8855, 40, 180);
 
 		const aspect = canvas.width / canvas.height;
-		this.camera = new THREE.PerspectiveCamera(35, aspect, 0.05, 200);
-		this.camera.position.set(-5, 5, 7);          // higher isometric-ish angle
+		// Far plane bumped to 400 — the park is ~110 m end-to-end, the
+		// orbit camera should be able to pull back enough to see all of it.
+		this.camera = new THREE.PerspectiveCamera(35, aspect, 0.05, 400);
+		this.camera.position.set(-12, 8, 14);          // higher isometric-ish angle
 
 		// Lighting — bright warm ambient + a single sun with soft shadows.
 		this.scene.add(new THREE.AmbientLight(0xffeedd, 0.9));
 		const sun = new THREE.DirectionalLight(0xfff8ee, 1.0);
-		sun.position.set(6, 12, 4);
+		// Sun positioned high and to the side; shadow camera bounds expanded
+		// so the whole park (~110 m × 70 m playable) receives shadows.
+		sun.position.set(40, 80, 30);
 		sun.castShadow = true;
 		sun.shadow.mapSize.set(2048, 2048);
 		sun.shadow.camera.near = 1;
-		sun.shadow.camera.far  = 40;
-		sun.shadow.camera.left = -15; sun.shadow.camera.right = 15;
-		sun.shadow.camera.top  =  15; sun.shadow.camera.bottom = -15;
+		sun.shadow.camera.far  = 250;
+		sun.shadow.camera.left = -80; sun.shadow.camera.right = 80;
+		sun.shadow.camera.top  =  80; sun.shadow.camera.bottom = -80;
 		sun.shadow.bias = -0.0005;
 		this.scene.add(sun);
 		this.sun = sun;
 
-		// Ground — solid warm orange, no grid.
+		// Ground — heightfield mesh built from the procedural `heightAt`
+		// function. PlaneGeometry is subdivided into a 200×200 grid of
+		// vertices over a 250 m × 250 m patch; each vertex gets its z
+		// (which becomes y after the rotation) displaced by heightAt(x, z).
+		// Same heightAt drives the road, the bot's render position, and
+		// (later) the slope-force disturbance — single source of truth.
+		const GROUND_SIZE = 250;
+		const GROUND_SEGS = 200;
+		const groundGeom = new THREE.PlaneGeometry(GROUND_SIZE, GROUND_SIZE, GROUND_SEGS, GROUND_SEGS);
+		const gp = groundGeom.attributes.position;
+		for (let i = 0; i < gp.count; i++) {
+			// PlaneGeometry is built in the XY plane; we'll rotate it onto
+			// the XZ plane below. Before rotation, its "z" attribute is the
+			// height-axis we want to displace.
+			const x = gp.getX(i);
+			const y = gp.getY(i);
+			gp.setZ(i, heightAt(x, -y));
+		}
+		groundGeom.computeVertexNormals();
 		const groundMat = new THREE.MeshStandardMaterial({
-			color: 0xdd6633, roughness: 1.0, metalness: 0,
+			color: 0x5a7a3a, roughness: 1.0, metalness: 0,
+			flatShading: true,    // chunky low-poly facets, not smoothed
 		});
-		this.ground = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), groundMat);
+		this.ground = new THREE.Mesh(groundGeom, groundMat);
 		this.ground.rotation.x = -Math.PI / 2;
 		this.ground.receiveShadow = true;
 		this.scene.add(this.ground);
@@ -60,7 +88,7 @@ export class WorldRenderer3D {
 		this.controls.enableDamping = true;
 		this.controls.dampingFactor = 0.1;
 		this.controls.minDistance = 1.0;
-		this.controls.maxDistance = 40;
+		this.controls.maxDistance = 200;
 		this.controls.maxPolarAngle = Math.PI * 0.49;   // don't go below ground
 		this.controls.target.set(0, 0.4, 0);
 
@@ -155,6 +183,9 @@ export class WorldRenderer3D {
 		this.roadGroup   = new THREE.Group();
 		this.scene.add(this.roadGroup);
 		this._buildRoadMeshes();
+
+		// Tree clusters scattered across the park, avoiding the roads.
+		this._buildTrees();
 	}
 
 	// Convert a canvas-relative click to world-frame ground (y=0) coords.
@@ -183,12 +214,14 @@ export class WorldRenderer3D {
 		while (this.roadGroup.children.length) {
 			this.roadGroup.remove(this.roadGroup.children[0]);
 		}
-		const SAMPLES = 32;
-		const half    = this.roadNetwork.width / 2;
+		const SAMPLES = 64;        // up from 32 — kills mid-curve faceting
+		const width   = this.roadNetwork.width;
+		const half    = width / 2;
 		const mat = new THREE.MeshStandardMaterial({
 			color: 0x3a2a20, roughness: 1.0, metalness: 0,
 		});
 
+		// Edge ribbons.
 		for (let ei = 0; ei < this.roadNetwork.edges.length; ei++) {
 			if (this.roadNetwork.edges[ei].blocked) continue;
 			const center = this.roadNetwork.sampleEdge(ei, SAMPLES);
@@ -203,12 +236,20 @@ export class WorldRenderer3D {
 				const nx =  tz;
 				const nz = -tx;
 				const li = i * 6;
-				verts[li + 0] = center[i].x + nx * half;
-				verts[li + 1] = 0.02;
-				verts[li + 2] = center[i].z + nz * half;
-				verts[li + 3] = center[i].x - nx * half;
-				verts[li + 4] = 0.02;
-				verts[li + 5] = center[i].z - nz * half;
+				const lx = center[i].x + nx * half;
+				const lz = center[i].z + nz * half;
+				const rx = center[i].x - nx * half;
+				const rz = center[i].z - nz * half;
+				// Lift road samples to ride the terrain — each side of the
+				// ribbon samples the height function independently, so the
+				// road banks slightly across hills (looks more natural than
+				// keeping both edges at the centerline height).
+				verts[li + 0] = lx;
+				verts[li + 1] = heightAt(lx, lz) + 0.04;
+				verts[li + 2] = lz;
+				verts[li + 3] = rx;
+				verts[li + 4] = heightAt(rx, rz) + 0.04;
+				verts[li + 5] = rz;
 			}
 			for (let i = 0; i < center.length - 1; i++) {
 				const a = 2 * i,       b = 2 * i + 1;
@@ -223,6 +264,109 @@ export class WorldRenderer3D {
 			const mesh = new THREE.Mesh(geom, mat);
 			mesh.receiveShadow = true;
 			this.roadGroup.add(mesh);
+		}
+
+		// Node discs — circular patches at every node, sized to cover the
+		// road width at any approach angle. Hides the seams where edges
+		// arriving from different directions don't naturally line up.
+		// Sits a hair above the edge ribbons so junctions read clean.
+		const discGeom = new THREE.CircleGeometry(width * 0.7, 24);
+		discGeom.rotateX(-Math.PI / 2);
+		for (const node of this.roadNetwork.nodes) {
+			const disc = new THREE.Mesh(discGeom, mat);
+			disc.position.set(node.x, heightAt(node.x, node.z) + 0.05, node.z);
+			disc.receiveShadow = true;
+			this.roadGroup.add(disc);
+		}
+	}
+
+	// Tree clusters scattered across the park. Each tree is a low-poly
+	// cone with a small trunk, randomly drawn from a 5-color autumn
+	// palette. Avoids the road network — any candidate position closer
+	// than `roadAvoid` to a centerline sample is rejected. Uses a fixed
+	// PRNG seed so the layout is deterministic between page reloads (no
+	// jarring re-shuffles when the user resets).
+	_buildTrees() {
+		this.treeGroup = new THREE.Group();
+		this.scene.add(this.treeGroup);
+
+		const palette = [
+			0x3e6b32,   // deep forest green
+			0x6b8e3f,   // grass green
+			0x4a7a5e,   // dusty teal
+			0xc4623a,   // burnt orange
+			0xa84436,   // dusty red
+		];
+		const TRUNK_COLOR = 0x4a3326;
+
+		// Pre-build a flat list of all road centerline samples for the
+		// distance check. Sample at coarse density — 32 samples per edge
+		// is plenty for tree-avoidance purposes.
+		const roadSamples = [];
+		for (let ei = 0; ei < this.roadNetwork.edges.length; ei++) {
+			const samples = this.roadNetwork.sampleEdge(ei, 32);
+			for (const s of samples) roadSamples.push(s);
+		}
+		const roadAvoid = this.roadNetwork.width / 2 + 1.4;   // m
+		const roadAvoidSq = roadAvoid * roadAvoid;
+
+		// Deterministic 32-bit linear-congruential PRNG (Numerical Recipes
+		// constants). A fixed seed gives the same forest every reload.
+		let seed = 0x13579bdf;
+		const rand = () => {
+			seed = (seed * 1664525 + 1013904223) >>> 0;
+			return seed / 0x100000000;
+		};
+
+		// Park playable footprint plus margin so trees fade out around
+		// the edges instead of stopping at a hard boundary.
+		const X_MIN = -55, X_MAX =  70;
+		const Z_MIN = -35, Z_MAX =  45;
+
+		const TARGET_TREES = 220;
+		let placed = 0, attempts = 0;
+		while (placed < TARGET_TREES && attempts < TARGET_TREES * 8) {
+			attempts++;
+			const x = X_MIN + rand() * (X_MAX - X_MIN);
+			const z = Z_MIN + rand() * (Z_MAX - Z_MIN);
+
+			// Reject if too close to any road sample.
+			let tooClose = false;
+			for (const s of roadSamples) {
+				const dx = x - s.x, dz = z - s.z;
+				if (dx * dx + dz * dz < roadAvoidSq) { tooClose = true; break; }
+			}
+			if (tooClose) continue;
+
+			// Vary tree size a little so the forest has rhythm. Slightly
+			// taller, thinner trees on hills (where height > 0) for a hint
+			// of pine-on-mountain feel.
+			const y = heightAt(x, z);
+			const baseHeight = 1.6 + rand() * 1.8 + Math.max(0, y) * 0.3;
+			const baseRadius = 0.6 + rand() * 0.5;
+			const color = palette[(rand() * palette.length) | 0];
+
+			const tree = new THREE.Group();
+			const trunk = new THREE.Mesh(
+				new THREE.CylinderGeometry(0.12, 0.16, 0.5, 6),
+				new THREE.MeshStandardMaterial({ color: TRUNK_COLOR, roughness: 1, flatShading: true }),
+			);
+			trunk.position.y = 0.25;
+			trunk.castShadow = true;
+			tree.add(trunk);
+
+			const foliage = new THREE.Mesh(
+				new THREE.ConeGeometry(baseRadius, baseHeight, 7),
+				new THREE.MeshStandardMaterial({ color, roughness: 1, flatShading: true }),
+			);
+			foliage.position.y = 0.5 + baseHeight / 2 - 0.1;
+			foliage.rotation.y = rand() * Math.PI * 2;
+			foliage.castShadow = true;
+			tree.add(foliage);
+
+			tree.position.set(x, y, z);
+			this.treeGroup.add(tree);
+			placed++;
 		}
 	}
 
@@ -563,8 +707,12 @@ export class WorldRenderer3D {
 		this.deck.position.y  = chassisH + headH / 2;
 		this.com.position.y   = L;
 
-		// Bot world position + heading
-		this.bot.position.set(state.x, 0, state.z);
+		// Bot world position + heading. Y rides on the terrain — the bot's
+		// visual base sits at heightAt(x, z); body still pivots around
+		// gravity-vertical, not terrain-normal. (Per the "balance bots
+		// don't care about slopes" principle: hills are a force
+		// disturbance, not a control problem.)
+		this.bot.position.set(state.x, heightAt(state.x, state.z), state.z);
 		this.bot.rotation.y = state.heading;
 
 		// Trail of where the bot has actually driven — disabled for now,
@@ -612,14 +760,20 @@ export class WorldRenderer3D {
 		// The bot's forward in world coords is (cos(h), -sin(h)) for (x, z),
 		// matching the plant's heading convention. "Behind" the bot is the
 		// negation: (-cos(h), +sin(h)).
-		const focusY = Math.max(0.6, L * 0.8);
+		// focusY tracks the terrain height under the bot so the camera frames
+		// the bot at the right altitude in valleys and over hills.
+		const groundY = heightAt(state.x, state.z);
+		const focusY  = groundY + Math.max(0.6, L * 0.8);
 		const newTarget = new THREE.Vector3(state.x, focusY, state.z);
 		const idleSec = (performance.now() - this.lastInteractionTime) / 1000;
 		const autoFollow = this.autoFollowEnabled && !this.userInteracting && idleSec > 2.5;
 
 		if (autoFollow) {
-			const D = this.followDistance ?? 6;
-			const H = this.followHeight   ?? 3;
+			// Default chase-cam distance is wide enough to see a chunk of
+			// the park around the bot — the world is ~110 m × 70 m, so a
+			// 6 m chase view feels claustrophobic. User-set values stick.
+			const D = this.followDistance ?? 12;
+			const H = this.followHeight   ?? 6;
 			const desX = state.x - D * Math.cos(state.heading);
 			const desZ = state.z + D * Math.sin(state.heading);
 			const desY = focusY + H;

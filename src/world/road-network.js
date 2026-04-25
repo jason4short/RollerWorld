@@ -66,40 +66,44 @@ export class RoadNetwork {
 		this.nodes = [];
 		this.edges = [];
 
-		// Nodes laid out in a roughly 22 m × 14 m park. Names are for
-		// debugging / future signage.
-		const A = this.addNode( -9, -1, 'west-entrance');
-		const B = this.addNode( -3, -3, 'south-fork');
-		const C = this.addNode(  4, -4, 'south-junction');
-		const D = this.addNode(  9, -2, 'east-bend');
-		const E = this.addNode( 10,  4, 'east-corner');
-		const F = this.addNode(  5,  5, 'north-fork');
-		const G = this.addNode( -2,  4, 'north-junction');
-		const H = this.addNode( -7,  2, 'west-fork');
-		const I = this.addNode(  1,  0, 'hub');
-		const J = this.addNode( 12, -5, 'overlook');     // dead-end spur
-		const K = this.addNode( -5,  7, 'grove');        // dead-end spur
+		// All park positions scale through this constant. Authoring is in
+		// "park units"; the constant gives the park real-world size in m.
+		// Bot is ~0.5 m wide and 1.5 m road = 3 bot-widths of corridor.
+		const S = 5;
+
+		// Nodes laid out in a roughly 110 m × 70 m park (after scaling).
+		const A = this.addNode( -9 * S, -1 * S, 'west-entrance');
+		const B = this.addNode( -3 * S, -3 * S, 'south-fork');
+		const C = this.addNode(  4 * S, -4 * S, 'south-junction');
+		const D = this.addNode(  9 * S, -2 * S, 'east-bend');
+		const E = this.addNode( 10 * S,  4 * S, 'east-corner');
+		const F = this.addNode(  5 * S,  5 * S, 'north-fork');
+		const G = this.addNode( -2 * S,  4 * S, 'north-junction');
+		const H = this.addNode( -7 * S,  2 * S, 'west-fork');
+		const I = this.addNode(  1 * S,  0 * S, 'hub');
+		const J = this.addNode( 12 * S, -5 * S, 'overlook');
+		const K = this.addNode( -5 * S,  7 * S, 'grove');
 
 		// Outer perimeter — the long lap. Control points keep each edge
 		// from being a straight line; small offsets give organic curvature.
-		this.addEdge(A, B, [{ x: -6,   z: -2.5 }]);
-		this.addEdge(B, C, [{ x: -1,   z: -3.5 }, { x: 1, z: -4.2 }]);
-		this.addEdge(C, D, [{ x:  7,   z: -3.5 }]);
-		this.addEdge(D, E, [{ x: 10.5, z:  1   }]);
-		this.addEdge(E, F, [{ x:  8,   z:  5   }]);
-		this.addEdge(F, G, [{ x:  2,   z:  6   }]);
-		this.addEdge(G, H, [{ x: -5,   z:  3.5 }]);
-		this.addEdge(H, A, [{ x: -9,   z:  0   }]);
+		this.addEdge(A, B, [{ x: -6   * S, z: -2.5 * S }]);
+		this.addEdge(B, C, [{ x: -1   * S, z: -3.5 * S }, { x: 1 * S, z: -4.2 * S }]);
+		this.addEdge(C, D, [{ x:  7   * S, z: -3.5 * S }]);
+		this.addEdge(D, E, [{ x: 10.5 * S, z:  1   * S }]);
+		this.addEdge(E, F, [{ x:  8   * S, z:  5   * S }]);
+		this.addEdge(F, G, [{ x:  2   * S, z:  6   * S }]);
+		this.addEdge(G, H, [{ x: -5   * S, z:  3.5 * S }]);
+		this.addEdge(H, A, [{ x: -9   * S, z:  0   * S }]);
 
 		// Cross-paths through the hub (I). These are the forks.
-		this.addEdge(B, I, [{ x: -1,   z: -1   }]);
-		this.addEdge(I, C, [{ x:  3,   z: -1.5 }]);
-		this.addEdge(I, F, [{ x:  3,   z:  2   }, { x: 4, z: 3.5 }]);
-		this.addEdge(I, H, [{ x: -3,   z:  2   }]);
+		this.addEdge(B, I, [{ x: -1 * S, z: -1   * S }]);
+		this.addEdge(I, C, [{ x:  3 * S, z: -1.5 * S }]);
+		this.addEdge(I, F, [{ x:  3 * S, z:  2   * S }, { x: 4 * S, z: 3.5 * S }]);
+		this.addEdge(I, H, [{ x: -3 * S, z:  2   * S }]);
 
 		// Spurs to dead-end features (overlook + grove).
-		this.addEdge(C, J, [{ x:  8,   z: -5   }]);
-		this.addEdge(G, K, [{ x: -3,   z:  6   }]);
+		this.addEdge(C, J, [{ x:  8 * S, z: -5 * S }]);
+		this.addEdge(G, K, [{ x: -3 * S, z:  6 * S }]);
 
 		return this;
 	}

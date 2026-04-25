@@ -171,8 +171,9 @@ export class App {
 		// Spawn at the park's west-entrance node, heading toward the
 		// south-fork (node A → node B). Heading from world (dx, dz):
 		//   forward = (cos h, -sin h), so h = atan2(-dz, dx).
-		const SPAWN_X = -9, SPAWN_Z = -1;
-		const SPAWN_HEADING = Math.atan2(-(-3 - -1), (-3 - -9));   // ≈ 0.32 rad
+		// Coordinates match the road-network's `loadPark()` scale (S=5).
+		const SPAWN_X = -45, SPAWN_Z = -5;
+		const SPAWN_HEADING = Math.atan2(-(-15 - -5), (-15 - -45));   // ≈ 0.32 rad
 		this.plant.setState({
 			x: SPAWN_X, z: SPAWN_Z, vel_cart: 0,
 			pitch: th0 * Math.PI / 180, pitch_rate: 0,
