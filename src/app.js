@@ -91,6 +91,11 @@ export class App {
 		this.pilotTiltMax 		= 10 * (Math.PI / 180);
 		this.pilotYawRate		= 0;
 		this.pilotYawRateMax 	= 1.5; // rad/s (~85°/s)
+		// Cascade tilt-mode integrates pilotYawRate into a heading reference
+		// so arrow-key turns produce a real heading_target the Attitude layer
+		// can track. Same trick as FBW's heading integration, but here it
+		// lives on App since arrow keys are an app-level pilot input.
+		this.pilotYawHeadingRef = 0;
 		this.lastTauYaw			= 0;
 
 		// Waypoint queue. Shift+click appends; Auto mode chases head, on
@@ -153,6 +158,7 @@ export class App {
 		});
 		this.lastTauYaw = 0;
 		this.pilotYawRate = 0;
+		this.pilotYawHeadingRef = 0;
 		this.waypoints.length = 0;
 		for (const c of Object.values(this.controllers)) c.reset();
 		this.stack.reset();
@@ -440,14 +446,21 @@ export class App {
 				this._advanceWaypointIfArrived();
 
 			} else {
+				// Integrate the arrow-key yaw rate into a virtual heading
+				// reference so the Attitude layer (cascade) or yaw torque
+				// loop (legacy) gets a meaningful target while arrows are held.
+				this.pilotYawHeadingRef += this.pilotYawRate * navDt;
+				while (this.pilotYawHeadingRef >  Math.PI) this.pilotYawHeadingRef -= 2 * Math.PI;
+				while (this.pilotYawHeadingRef < -Math.PI) this.pilotYawHeadingRef += 2 * Math.PI;
+
 				if (isCascade) {
 					// Arrow-key debug: bypass Mixer, drive Attitude's pitch_target
-					// directly. No velocity feedback in this mode — it's for
-					// tuning the Attitude layer in isolation.
+					// directly. Yaw target comes from the integrated arrow-key
+					// rate so ←/→ actually turns the bot.
 					cascadeCommand = {
 						mode:         'tilt',
 						pitch_target: this.pilotTilt,
-						yaw_target:   this.measured?.heading ?? 0,
+						yaw_target:   this.pilotYawHeadingRef,
 					};
 				} else {
 					tiltSetpoint	 = this.pilotTilt;
