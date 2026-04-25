@@ -5,6 +5,12 @@
 //     is derived from tick delta over the sensor period.
 //   - Yaw heading (compass) + yaw rate (gyro Z), with Gaussian noise.
 //
+// Failure modes (optional, enabled via cfg):
+//   - IMU bias random walk: a slowly-drifting offset added to pitch.
+//     Real MEMS IMUs have this; auto-trim is supposed to absorb it.
+//   - Encoder dropout: probability per sample that the encoder returns its
+//     previous reading instead of fresh data (loose connector, ESD glitch).
+//
 // Without this layer, controllers see "god-mode" state and tune too hot.
 
 export class Sensors {
@@ -17,6 +23,7 @@ export class Sensors {
 		this.lastTicks    = 0;
 		this.lastTime     = 0;
 		this.lastSpeed    = 0;
+		this.imuBiasWalk  = 0;   // accumulated random-walk offset on pitch
 	}
 
 	// Gaussian via Box–Muller.
@@ -43,9 +50,24 @@ export class Sensors {
 			const ticks = Math.round((this.bodyDistance / circ) * cfg.ticks_per_rev);
 			const dTicks = ticks - this.lastTicks;
 			speed = (dTicks * circ / cfg.ticks_per_rev) / dt;
-			this.lastTicks = ticks;
-			this.lastTime  = now;
-			this.lastSpeed = speed;
+
+			// Encoder dropout: occasional sample returns previous reading.
+			// Don't advance the tick / time counters — the next good sample
+			// will see the full delta and recover.
+			const dropoutProb = cfg.encoder_dropout_prob ?? 0;
+			if (dropoutProb > 0 && Math.random() < dropoutProb) {
+				speed = this.lastSpeed;
+			} else {
+				this.lastTicks = ticks;
+				this.lastTime  = now;
+				this.lastSpeed = speed;
+			}
+		}
+
+		// IMU bias random walk. Standard sigma is per-second; scale by √dt.
+		const biasRate = cfg.imu_bias_drift_rate ?? 0;
+		if (biasRate > 0 && dt > 0) {
+			this.imuBiasWalk += this._randn() * biasRate * Math.sqrt(dt);
 		}
 
 		// World-frame position (truth from plant — no encoder dead-reckoning
@@ -54,7 +76,7 @@ export class Sensors {
 		const z = plantState.z;
 		const vel_cart = speed;   // body-frame cart velocity (encoder-quantized)
 
-		const pitch      = plantState.pitch      + this._randn() * cfg.imu_noise;
+		const pitch      = plantState.pitch + this.imuBiasWalk + this._randn() * cfg.imu_noise;
 		const pitch_rate = plantState.pitch_rate + this._randn() * cfg.gyro_noise;
 
 		// CoM position in world (small-pitch correction); useful for 1D nav,

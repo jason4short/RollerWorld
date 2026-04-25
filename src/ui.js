@@ -71,9 +71,11 @@ export class UI {
 
   readSensors() {
     return {
-      ticks_per_rev: this.num('ticks_per_rev'),
-      imu_noise:     this.num('imu_noise'),
-      gyro_noise:    this.num('gyro_noise'),
+      ticks_per_rev:        this.num('ticks_per_rev'),
+      imu_noise:            this.num('imu_noise'),
+      gyro_noise:           this.num('gyro_noise'),
+      imu_bias_drift_rate:  this.num('imu_bias_drift_rate'),
+      encoder_dropout_prob: this.num('encoder_dropout_prob'),
     };
   }
 
@@ -173,6 +175,7 @@ export class UI {
     'th0', 'noise',
     // sensors & timing
     'ticks_per_rev', 'imu_noise', 'gyro_noise',
+    'imu_bias_drift_rate', 'encoder_dropout_prob',
     'sensorHz', 'outerHz', 'innerHz',
     // motor
     'Km', 'Kv_motor', 'PWM_max', 'deadband',

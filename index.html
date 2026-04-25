@@ -316,6 +316,8 @@
     <label>Encoder ticks/rev  <input type="number" id="ticks_per_rev" value="815" step="1"></label>
     <label>IMU pitch noise (rad)  <input type="number" id="imu_noise" value="0.002" step="0.0005"></label>
     <label>Gyro noise (rad/s)     <input type="number" id="gyro_noise" value="0.01"  step="0.005"></label>
+    <label>IMU bias drift (rad/√s)<input type="number" id="imu_bias_drift_rate" value="0" step="0.001"></label>
+    <label>Encoder dropout (0..1) <input type="number" id="encoder_dropout_prob" value="0" step="0.05" min="0" max="1"></label>
     <label>Sensor rate (Hz) <input type="number" id="sensorHz" value="100" step="10"></label>
     <label>Outer loop (Hz)  <input type="number" id="outerHz"  value="100" step="10"></label>
     <label>Inner loop (Hz)  <input type="number" id="innerHz"  value="400" step="10"></label>
