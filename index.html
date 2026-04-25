@@ -217,6 +217,16 @@
     </label>
   </div>
 
+  <details class="panel" data-ctrl="cascade" open>
+    <summary>Cascade flow</summary>
+    <p style="font-size:11px; color:#888; margin: 0 0 6px 0">
+      Each tick, signals flow top-down through the layers. Arrow brightness
+      shows freshness — slower layers' arrows fade between firings, making
+      the rate hierarchy visible.
+    </p>
+    <canvas id="cascadeFlow" width="280" height="320" style="width:100%; background:#0a0a0a; border:1px solid #222"></canvas>
+  </details>
+
   <details class="panel" data-ctrl="cascade">
     <summary>Mixer — velocity → tilt</summary>
     <p style="font-size:11px; color:#888; margin: 0 0 6px 0">
