@@ -382,6 +382,13 @@ export class App {
 					this.nav.target_x = path[0].x;
 					this.nav.target_z = path[0].z;
 				}
+				// Diagnostic — dump path length + first detour point so we can
+				// see whether A* is actually finding a route around walls.
+				const head = path[0] ?? { x: NaN, z: NaN };
+				const next = path[1] ?? { x: NaN, z: NaN };
+				this.ui.log(this.tSim,
+					`replan: n=${path.length} head=(${head.x.toFixed(2)},${head.z.toFixed(2)}) ` +
+					`next=(${next.x.toFixed(2)},${next.z.toFixed(2)})`);
 			}
 
 
