@@ -321,7 +321,6 @@ export class WorldRenderer3D {
 				}),
 			);
 			this.gridMesh.rotation.x = -Math.PI / 2;
-			this.gridMesh.rotation.z =  Math.PI;     // canvas (i, j) → world (x, z) sign flip
 			this.gridMesh.position.set(grid.originX + w / 2, 0.025, grid.originZ + h / 2);
 			this.scene.add(this.gridMesh);
 		}
