@@ -42,17 +42,17 @@ export class App {
 			nn: new NNController(),
 		};
 
-		this.nnTrainer = new NNTrainer();
-		this.controllerType = this.ui.readController();
-		this.nav = new NavController();
-		this.yawController = new YawController();
-		this.calibrator = new MotorCalibrator({ dt: this.DT });
-		const joyEl = document.getElementById('joystick');
-		this.joystick = joyEl ? new Joystick(joyEl) : null;
-		this.recorder = new Recorder();
-		this.renderer = new WorldRenderer3D(document.getElementById('world'));
-		this.plotter	= new Plotter(document.getElementById('plot'));
-		this.experiment = new ExperimentRunner(this.DT);
+		this.nnTrainer 			= new NNTrainer();
+		this.controllerType 	= this.ui.readController();
+		this.nav 				= new NavController();
+		this.yawController 		= new YawController();
+		this.calibrator 		= new MotorCalibrator({ dt: this.DT });
+		const joyEl 			= document.getElementById('joystick');
+		this.joystick 			= joyEl ? new Joystick(joyEl) : null;
+		this.recorder 			= new Recorder();
+		this.renderer 			= new WorldRenderer3D(document.getElementById('world'));
+		this.plotter			= new Plotter(document.getElementById('plot'));
+		this.experiment 		= new ExperimentRunner(this.DT);
 
 		this.running 	= false;
 		this.tSim		= 0;
@@ -76,6 +76,10 @@ export class App {
 		this.pilotYawRateMax 	= 1.5; // rad/s (~85°/s)
 		this.lastTauYaw			= 0;
 
+		// Waypoint queue. Shift+click appends; Auto mode chases head, on
+		// arrival pops to the next, exits to FBW when empty.
+		this.waypoints = [];
+
 		this.wireUI();
 		this.wireKeys();
 		this.syncControllerPanels();
@@ -86,6 +90,35 @@ export class App {
 	}
 
 	currentController() { return this.controllers[this.controllerType]; }
+
+	// Auto mode: when the bot is within the arrival radius of the current
+	// waypoint, drop it from the queue and advance. Empty queue → kick
+	// back to FBW so the pilot has control again.
+	_advanceWaypointIfArrived() {
+		const head = this.waypoints[0];
+		if (!head) return;
+		const sx = (this.measured || this.plant.state).x;
+		const sz = (this.measured || this.plant.state).z ?? 0;
+		const dx = head.x - sx;
+		const dz = head.z - sz;
+		const arrival = this.ui.readNavGains().yaw_disable_radius || 0.2;
+		if (Math.hypot(dx, dz) > arrival) return;
+
+		this.waypoints.shift();
+		this.ui.log(this.tSim, `WP reached  · queue=${this.waypoints.length}`);
+		const next = this.waypoints[0];
+		if (next) {
+			this.nav.target_x = next.x;
+			this.nav.target_z = next.z;
+			document.getElementById('navTargetX').value = next.x.toFixed(2);
+			const tz = document.getElementById('navTargetZ');
+			if (tz) tz.value = next.z.toFixed(2);
+		} else {
+			document.getElementById('pilotMode').value = 'fbw';
+			document.getElementById('navEnabled').checked = false;
+			this.ui.log(this.tSim, 'route done → FBW');
+		}
+	}
 
 	currentGains() {
 		return this.controllerType === 'ardubalance'
@@ -103,6 +136,7 @@ export class App {
 		});
 		this.lastTauYaw = 0;
 		this.pilotYawRate = 0;
+		this.waypoints.length = 0;
 		for (const c of Object.values(this.controllers)) c.reset();
 		this.sensors.reset();
 		this.measured		= null;
@@ -116,10 +150,14 @@ export class App {
 	}
 
 	render() {
-		const navTarget = this.ui.navEnabled()
+		const showFlag = this.ui.navEnabled() || this.ui.readPilotMode() === 'auto';
+		const navTarget = showFlag
 			? { x: this.nav.target_x, z: this.nav.target_z }
 			: null;
-		this.renderer.draw(this.plant.state, this.plant.params, navTarget);
+		// Upcoming WPs (excluding the head, which is rendered as the bobbing
+		// target). Empty when queue is one or zero deep.
+		const queueRest = this.waypoints.length > 1 ? this.waypoints.slice(1) : [];
+		this.renderer.draw(this.plant.state, this.plant.params, navTarget, queueRest);
 		const fRef = this.controllerType === 'ardubalance'
 			? this.motor.Km
 			: this.ui.readGains().Fmax;
@@ -193,6 +231,7 @@ export class App {
 			const pilotMode = this.ui.readPilotMode();
 			let tiltSetpoint, yawRateSetpoint;
 
+
 			if (pilotMode === 'fbw' && this.joystick) {
 				const s		= this.joystick.value();
 				// Screen-up = forward, screen-right = turn right (negative
@@ -202,16 +241,21 @@ export class App {
 					stick, this.ui.readNavGains(), navDt);
 				tiltSetpoint	 = out.tilt;
 				yawRateSetpoint  = out.yawRate;
-			} else if (navOn) {
+
+			} else if (pilotMode === 'auto') {
 				const out = this.nav.update(this.measured || this.plant.state, this.ui.readNavGains(), navDt);
 				tiltSetpoint	 = out.tilt;
 				yawRateSetpoint  = out.yawRate;
+				this._advanceWaypointIfArrived();
+
 			} else {
 				tiltSetpoint	 = this.pilotTilt;
 				yawRateSetpoint  = this.pilotYawRate;
 			}
 
+			
 			if (controller instanceof ArduBalanceController || controller instanceof NNController) {
+				//
 				controller.target_angle = tiltSetpoint;
 			}
 
@@ -423,10 +467,26 @@ export class App {
 		if (navTzInput) navTzInput.addEventListener('input', syncTargetFromInputs);
 		syncTargetFromInputs();
 
-		// Click-to-set-nav-target — disabled for now (was: raycast onto ground
-		// plane and place the flag where you click).
-		// const world = document.getElementById('world');
-		// world.addEventListener('click', e => { ... });
+		// Shift+click on the world canvas drops a waypoint flag and sets the
+		// nav target. Plain clicks pass through to OrbitControls so the
+		// camera still drags freely.
+		const worldEl = document.getElementById('world');
+		worldEl.addEventListener('click', e => {
+			if (!e.shiftKey) return;
+			const hit = this.renderer.screenToGround(e.clientX, e.clientY);
+			if (!hit) return;
+			this.waypoints.push({ x: hit.x, z: hit.z });
+			// Head of the queue is the active target.
+			const head = this.waypoints[0];
+			this.nav.target_x = head.x;
+			this.nav.target_z = head.z;
+			navTxInput.value = head.x.toFixed(2);
+			if (navTzInput) navTzInput.value = head.z.toFixed(2);
+			document.getElementById('navEnabled').checked = true;
+			document.getElementById('pilotMode').value = 'auto';
+			this.ui.log(this.tSim,
+				`WP +(${hit.x.toFixed(2)}, ${hit.z.toFixed(2)})  · queue=${this.waypoints.length}`);
+		});
 
 		for (const btn of document.querySelectorAll('[data-preset]')) {
 			btn.onclick = () => {
@@ -570,7 +630,7 @@ export class App {
 		const mode		= document.getElementById('nnMode').value;
 		const hidden	= +document.getElementById('nnHidden').value;
 		const epochs	= +document.getElementById('nnEpochs').value;
-		const samples = +document.getElementById('nnSamples').value;
+		const samples 	= +document.getElementById('nnSamples').value;
 		const lr			= +document.getElementById('nnLR').value;
 		const nnStats = document.getElementById('nnStats');
 

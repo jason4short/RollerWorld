@@ -105,7 +105,7 @@ export class NNTrainer {
 	// Recorded mode loops over the captured buffer.
 	async train({ mlp, mode = 'random',
 	              data = null, gains = null, motor = null, dt = 1 / 400,
-	              epochs = 200, samplesPerEpoch = 1000,
+	              epochs = 3000, samplesPerEpoch = 1000,
 	              lr = 0.02, momentum = 0.9, onProgress }) {
 		const losses = [];
 		let prepared = null;

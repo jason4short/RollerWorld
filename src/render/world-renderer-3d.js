@@ -69,15 +69,36 @@ export class WorldRenderer3D {
 		this.scene.add(this.bot);
 		this._buildBot();
 
-		// Nav target flag
+		// Nav target flag (current/head — bobbing + spinning).
 		this.target = this._buildTargetFlag();
 		this.target.visible = false;
 		this.scene.add(this.target);
+
+		// Pool of static flags for upcoming waypoints in the queue. Built
+		// lazily on demand and reused; meshes past the queue length are
+		// hidden rather than destroyed.
+		this.queueFlags = [];
 
 		// Obstacle course
 		this.obstacles = new Obstacles();
 		this.obstacles.loadDemoCourse();
 		this.scene.add(this.obstacles.group);
+	}
+
+	// Convert a canvas-relative click to world-frame ground (y=0) coords.
+	// Returns { x, z } or null if the click misses the ground.
+	screenToGround(clientX, clientY) {
+		const rect = this.canvas.getBoundingClientRect();
+		const ndc = new THREE.Vector2(
+			((clientX - rect.left) / rect.width)  *  2 - 1,
+			((clientY - rect.top)  / rect.height) * -2 + 1,
+		);
+		const ray = new THREE.Raycaster();
+		ray.setFromCamera(ndc, this.camera);
+		const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+		const hit = new THREE.Vector3();
+		if (!ray.ray.intersectPlane(plane, hit)) return null;
+		return { x: hit.x, z: hit.z };
 	}
 
 	_buildBot() {
@@ -173,7 +194,7 @@ export class WorldRenderer3D {
 		g.add(pole);
 		const flag = new THREE.Mesh(
 			new THREE.BoxGeometry(0.44, 0.28, 0.04),
-			new THREE.MeshStandardMaterial({ color: 0xcc3322 }),
+			new THREE.MeshStandardMaterial({ color: 0x44ff66, emissive: 0x114422 }),
 		);
 		flag.position.set(0.22, 1.04, 0);
 		flag.castShadow = true;
@@ -181,7 +202,28 @@ export class WorldRenderer3D {
 		return g;
 	}
 
-	draw(state, params, navTarget = null) {
+	_buildQueueFlag() {
+		// Same shape as the nav target flag but a calmer color and no
+		// emissive — these are the "next up" flags, not the active one.
+		const g = new THREE.Group();
+		const pole = new THREE.Mesh(
+			new THREE.CylinderGeometry(0.04, 0.04, 1.2, 8),
+			new THREE.MeshStandardMaterial({ color: 0xf2e6cf }),
+		);
+		pole.position.y = 0.6;
+		pole.castShadow = true;
+		g.add(pole);
+		const flag = new THREE.Mesh(
+			new THREE.BoxGeometry(0.44, 0.28, 0.04),
+			new THREE.MeshStandardMaterial({ color: 0xffcc44 }),
+		);
+		flag.position.set(0.22, 1.04, 0);
+		flag.castShadow = true;
+		g.add(flag);
+		return g;
+	}
+
+	draw(state, params, navTarget = null, queueRest = []) {
 		const { L, R } = params;
 
 		// Wheels — scale for current radius, position at axle height.
@@ -211,12 +253,31 @@ export class WorldRenderer3D {
 		this.bot.position.set(state.x, 0, state.z);
 		this.bot.rotation.y = state.psi;
 
-		// Nav target flag (2D position on the ground)
+		// Nav target flag (2D position on the ground). Bob + spin so it
+		// reads as "go here" not just another course marker.
 		if (navTarget !== null) {
 			this.target.visible = true;
-			this.target.position.set(navTarget.x, 0, navTarget.z ?? 0);
+			const t = performance.now() * 0.001;
+			this.target.position.set(navTarget.x, 0.05 + 0.05 * Math.sin(t * 3), navTarget.z ?? 0);
+			this.target.rotation.y = t * 0.8;
 		} else {
 			this.target.visible = false;
+		}
+
+		// Upcoming waypoints — grow the pool as needed, hide the unused ones.
+		while (this.queueFlags.length < queueRest.length) {
+			const f = this._buildQueueFlag();
+			this.scene.add(f);
+			this.queueFlags.push(f);
+		}
+		for (let i = 0; i < this.queueFlags.length; i++) {
+			const f = this.queueFlags[i];
+			if (i < queueRest.length) {
+				f.visible = true;
+				f.position.set(queueRest[i].x, 0, queueRest[i].z);
+			} else {
+				f.visible = false;
+			}
 		}
 
 		// Camera follows the bot. We move the OrbitControls target to the
