@@ -149,15 +149,16 @@ export class UI {
         PWM_max:        this.num('PWM_max'),
       },
       // Safety governor — clips Nav's vel_target based on forward lidar.
-      // Tight forward beam, not a wide cone: in narrow corridors a 90°
-      // cone catches walls on both sides of every gap and the bot can
-      // never thread through. ±20° matches "directly ahead" — the bot
-      // can rotate just enough to clear walls from the beam and drive on.
+      // Disabled by default: when lidar_astar is the planner, every
+      // waypoint already lives in inflated-clear space, so Safety is
+      // redundant and only causes stalls in tight corridors. Useful for
+      // FBW (joystick driving) where there's no planner — flip enabled
+      // back on when running pilot-only modes.
       safety: {
-        enabled:    true,
-        distMin:    0.4,                 // full stop within this range (m)
-        distMax:    1.8,                 // full speed beyond this range (m)
-        forwardArc: Math.PI / 9,         // ±20° around heading counts as "ahead"
+        enabled:    false,
+        distMin:    0.4,
+        distMax:    1.8,
+        forwardArc: Math.PI / 9,
       },
     };
   }
