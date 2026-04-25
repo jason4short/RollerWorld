@@ -569,12 +569,15 @@ export class App {
 					break;
 				}
 			}
-			this.render();
-			
 		} else {
 			this.lastT = ts;
 		}
-		
+
+		// Render every frame regardless of sim state — keeps OrbitControls
+		// drag responsive while paused, lets the joystick still show, and
+		// keeps the plotter/panel-plots up-to-date with their last data.
+		this.render();
+
 		requestAnimationFrame(ts => this.tick(ts));
 	}
 
