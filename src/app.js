@@ -90,7 +90,7 @@ export class App {
 		this.pilotTilt			= 0;
 		this.pilotTiltMax 		= 10 * (Math.PI / 180);
 		this.pilotYawRate		= 0;
-		this.pilotYawRateMax 	= 1.5; // rad/s (~85°/s)
+		this.pilotYawRateMax 	= 6.0; // rad/s (~340°/s — match real bot)
 		// Cascade tilt-mode integrates pilotYawRate into a heading reference
 		// so arrow-key turns produce a real heading_target the Attitude layer
 		// can track. Same trick as FBW's heading integration, but here it
