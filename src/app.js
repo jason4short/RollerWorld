@@ -830,12 +830,22 @@ export class App {
 			// mode the planner routes around walls. Either way, the result
 			// becomes the waypoint queue, so the existing arrival-and-advance
 			// logic handles multi-waypoint paths without changes.
-			const start = this.measured ?? this.plant.state;
+			//
+			// Plan FROM the end of the existing queue (or the bot if empty).
+			// Otherwise multi-click extends the path back through the bot's
+			// current position, making the bot backtrack between clicks.
+			const start = this.waypoints.length > 0
+				? this.waypoints[this.waypoints.length - 1]
+				: (this.measured ?? this.plant.state);
 			const path  = this.planner.plan(
 				{ x: start.x, z: start.z ?? 0 }, hit,
 				{ obstacles: this.renderer.obstacles, res: 0.25, pad: 0.25 },
 			);
-			this.waypoints.push(...path);
+			// First segment of A* output is the start point itself; drop it
+			// when extending so we don't queue a redundant "go to where I
+			// already am" hop.
+			const segment = (this.waypoints.length > 0 && path.length > 1) ? path.slice(1) : path;
+			this.waypoints.push(...segment);
 
 			const head = this.waypoints[0];
 			this.nav.target_x = head.x;
