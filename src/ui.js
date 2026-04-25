@@ -95,7 +95,6 @@ export class UI {
   readNavGains() {
     return {
       Kp_nav:      this.num('Kp_nav'),
-      Kd_nav:      this.num('Kd_nav'),
       v_max:       this.num('nav_v_max'),
       a_max:       this.num('nav_a_max'),
       Kvel:        this.num('nav_Kvel'),
@@ -105,7 +104,6 @@ export class UI {
       Kheading:           this.num('Kheading'),
       MaxYawRate:         this.num('MaxYawRate'),
       yaw_disable_radius: this.num('yaw_disable_radius'),
-      yaw_speed_softness: this.num('yaw_speed_softness'),
     };
   }
 
@@ -186,11 +184,11 @@ export class UI {
     // Yaw control
     'Kyaw', 'MaxTauYaw',
     // Nav (drive)
-    'Kp_nav', 'Kd_nav',
+    'Kp_nav',
     'nav_v_max', 'nav_a_max', 'nav_Kvel',
     'nav_linear_zone', 'nav_lookahead', 'nav_tiltLimit',
     // Nav (yaw)
-    'Kheading', 'MaxYawRate', 'yaw_disable_radius', 'yaw_speed_softness',
+    'Kheading', 'MaxYawRate', 'yaw_disable_radius',
     // Cascade — Attitude pitch
     'att_pitch_P', 'att_pitch_D', 'att_pitch_I', 'att_force_max',
     // Cascade — Attitude yaw

@@ -145,10 +145,8 @@
     <label>Enable <input type="checkbox" id="navEnabled"></label>
     <label>Target x (m)  <input type="number" id="navTargetX" value="0" step="0.1"></label>
     <label>Target z (m)  <input type="number" id="navTargetZ" value="0" step="0.1"></label>
-    <label>Heading Kp (rad/s per rad)  <input type="number" id="Kheading"   value="2"   step="0.2"></label>
     <label>Max yaw rate (rad/s)        <input type="number" id="MaxYawRate" value="6.0" step="0.5"></label>
     <label>Yaw disable radius (m)      <input type="number" id="yaw_disable_radius" value="0.2" step="0.05"></label>
-    <label>Yaw speed softness (m/s)    <input type="number" id="yaw_speed_softness" value="5.0" step="0.5"></label>
     <label>Mode
       <select id="navMode">
         <option value="profile" selected>√ braking profile</option>
@@ -157,7 +155,6 @@
     </label>
     <div data-navmode="pd">
       <label>Kp (rad/m)    <input type="number" id="Kp_nav" value="0.15" step="0.01"></label>
-      <label>Kd (rad·s/m)  <input type="number" id="Kd_nav" value="0.3"  step="0.05"></label>
     </div>
     <div data-navmode="profile">
       <label>v_max (m/s)        <input type="number" id="nav_v_max" value="3.0"  step="0.1"></label>
@@ -297,8 +294,9 @@
       Used by ArduBalance, PID, and the legacy whole-stack NN. Cascade replaces
       this with Attitude's yaw (above).
     </p>
-    <label>Kyaw (N·m per rad/s) <input type="number" id="Kyaw"      value="4"   step="0.5"></label>
-    <label>Max yaw torque (N·m) <input type="number" id="MaxTauYaw" value="6"   step="0.5"></label>
+    <label>Heading Kp (rad/s per rad) <input type="number" id="Kheading"  value="2" step="0.2"></label>
+    <label>Kyaw (N·m per rad/s)       <input type="number" id="Kyaw"      value="4" step="0.5"></label>
+    <label>Max yaw torque (N·m)       <input type="number" id="MaxTauYaw" value="6" step="0.5"></label>
   </details>
 
   <div class="panel" data-tab="sim">
