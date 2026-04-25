@@ -373,25 +373,31 @@ export class App {
 				const start = this.measured ?? this.plant.state;
 				const startPos = { x: start.x, z: start.z ?? 0 };
 
-				// Validity check uses a SMALLER pad than the planner. The
-				// planner inflates walls by 0.6 to keep proposed paths well
-				// clear; once the bot is on such a path, asking "is the
-				// current segment still drivable?" only needs bot-radius
-				// margin (≈0.2). Otherwise the bot can't drive any corridor
-				// narrower than 1.2 m without constantly invalidating its
-				// own path on ground it has already mapped.
+				// Validity check uses pad=0 — literally "is a wall ON this
+				// segment now?" The planner already inflated by 0.6 when
+				// proposing the path, so the path is guaranteed clear. We
+				// only need to invalidate when something LITERALLY appears
+				// on the planned line (which happens when a wall is
+				// discovered DIRECTLY on the path, not near it).
+				//
+				// Plus a hysteresis: even when blocked, replans happen at
+				// most once per 1.5s. Stops the bot from re-flickering its
+				// path during the brief moments lidar is integrating new
+				// cells right next to a corridor it's already in.
 				let pathBlocked = false;
 				let prev = startPos;
 				for (const wp of this.waypoints) {
-					if (!this.occupancyGrid.hasLineOfSight(prev, wp, 0.2)) {
+					if (!this.occupancyGrid.hasLineOfSight(prev, wp, 0)) {
 						pathBlocked = true; break;
 					}
 					prev = wp;
 				}
-				const stale = (ts - this._lastReplanT) > 10000;   // 10s refresh
+				const sinceLast = ts - this._lastReplanT;
+				const stale     = sinceLast > 10000;   // 10s refresh
+				const canReplan = sinceLast > 1500;    // hysteresis: min 1.5s between
 				const noPath = this.waypoints.length === 0;
 
-				if (pathBlocked || stale || noPath) {
+				if ((pathBlocked && canReplan) || stale || noPath) {
 					this._lastReplanT = ts;
 					const path = this.planner.plan(
 						startPos, this.planner.goal,
