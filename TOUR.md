@@ -42,7 +42,7 @@ Instead, the work is split into **layers**, each with a small job. Higher layers
 
 Three reasons, each worth understanding.
 
-1. **Locality of failure.** When the bot oscillates, the *layer* tells you where to look. If pitch overshoots, it's Attitude's pitch arm. If the bot weaves while driving straight, it's Wheels' yaw mix or per-wheel tracking. If the heading hunts, it's Attitude's yaw arm. You don't go fishing through one big function.
+1. **Locality of failure.** When the bot oscillates, the *layer* tells you where to look. If pitch overshoots, it's Attitude's pitch. If the bot weaves while driving straight, it's Wheels' yaw mix or per-wheel tracking. If the heading hunts, it's Attitude's yaw. You don't go fishing through one big function.
 
 2. **Substitution.** Want to learn neural-net control? Replace one layer with an MLP. The layer's interface is tiny — a few numbers in, a few out — so the NN's job is well-defined. (`src/controllers/nn.js` is currently configured to swallow Mixer + Attitude + Wheels in one shot. The plan is to slot it into Attitude alone, where it belongs.)
 

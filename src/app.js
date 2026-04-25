@@ -704,7 +704,7 @@ export class App {
 
 		document.getElementById('btnTrainNN').onclick = () => this.trainNN();
 		document.getElementById('btnTrainPitchNN').onclick = () => this.trainAttitudePitchNN();
-		document.getElementById('pitch_arm_mode').onchange = e => {
+		document.getElementById('pitch_mode').onchange = e => {
 			const mode = e.target.value;
 			const mlp = this.attitudePitchMlp ?? null;
 			if (mode === 'nn' && !mlp) {
@@ -712,8 +712,8 @@ export class App {
 				e.target.value = 'rule';
 				return;
 			}
-			this.stack.attitude.setPitchArm(mode, mlp);
-			this.ui.log(this.tSim, `pitch arm: ${mode}`);
+			this.stack.attitude.setPitchMode(mode, mlp);
+			this.ui.log(this.tSim, `pitch: ${mode}`);
 		};
 
 		document.getElementById('btnTrainMixerNN').onclick = () => this.trainMixerNN();
@@ -730,7 +730,7 @@ export class App {
 		};
 
 		document.getElementById('btnTrainYawNN').onclick = () => this.trainAttitudeYawNN();
-		document.getElementById('yaw_arm_mode').onchange = e => {
+		document.getElementById('yaw_mode').onchange = e => {
 			const mode = e.target.value;
 			const mlp = this.attitudeYawMlp ?? null;
 			if (mode === 'nn' && !mlp) {
@@ -738,8 +738,8 @@ export class App {
 				e.target.value = 'rule';
 				return;
 			}
-			this.stack.attitude.setYawArm(mode, mlp);
-			this.ui.log(this.tSim, `yaw arm: ${mode}`);
+			this.stack.attitude.setYawMode(mode, mlp);
+			this.ui.log(this.tSim, `yaw: ${mode}`);
 		};
 
 		document.getElementById('btnTrainWheelsNN').onclick = () => this.trainWheelsNN();
@@ -1162,7 +1162,7 @@ export class App {
 		const attGains = this.ui.readCascadeGains().attitude;
 		const srcDesc = mode === 'random' ? `${samples} random/epoch` : `${recordedCount} recorded`;
 		stats.textContent = `training (${mode}): 0/${epochs}, ${srcDesc}, ${mlp.paramCount()} params`;
-		this.ui.log(this.tSim, `training yaw-arm NN (${mode}, ${hidden} hidden, ${mlp.paramCount()} params)`);
+		this.ui.log(this.tSim, `training yaw NN (${mode}, ${hidden} hidden, ${mlp.paramCount()} params)`);
 
 		const lossHistory = [];
 		const t0 = performance.now();
@@ -1179,18 +1179,18 @@ export class App {
 		const dt = (performance.now() - t0) / 1000;
 
 		this.attitudeYawMlp = mlp;
-		this.stack.attitude.setYawArm('nn', mlp);
-		document.getElementById('yaw_arm_mode').value = 'nn';
+		this.stack.attitude.setYawMode('nn', mlp);
+		document.getElementById('yaw_mode').value = 'nn';
 		const finalLoss = lossHistory.at(-1);
 		stats.textContent = `done: loss=${finalLoss.toExponential(3)}	(${dt.toFixed(1)}s) — using NN`;
-		this.ui.log(this.tSim, `yaw-arm NN trained: final loss=${finalLoss.toExponential(3)} in ${dt.toFixed(1)}s, switched to NN`);
+		this.ui.log(this.tSim, `yaw NN trained: final loss=${finalLoss.toExponential(3)} in ${dt.toFixed(1)}s, switched to NN`);
 	}
 
-	// Train a small MLP to imitate the rule-based pitch arm of Attitude.
+	// Train a small MLP to imitate the rule-based pitch of Attitude.
 	// Reuses the NN-training UI's hidden-units / epochs / samples / LR
 	// fields so a student can vary network capacity and watch loss vs
 	// fidelity. On success, the trained MLP is auto-installed and the
-	// pitch-arm select flips to 'nn'.
+	// pitch select flips to 'nn'.
 	async trainAttitudePitchNN() {
 		const hidden  = +document.getElementById('nnHidden').value;
 		const epochs  = Math.max(50, +document.getElementById('nnEpochs').value);
@@ -1209,7 +1209,7 @@ export class App {
 		const attGains = this.ui.readCascadeGains().attitude;
 		const srcDesc = mode === 'random' ? `${samples} random/epoch` : `${recordedCount} recorded`;
 		stats.textContent = `training (${mode}): 0/${epochs}, ${srcDesc}, ${mlp.paramCount()} params`;
-		this.ui.log(this.tSim, `training pitch-arm NN (${mode}, ${hidden} hidden, ${mlp.paramCount()} params)`);
+		this.ui.log(this.tSim, `training pitch NN (${mode}, ${hidden} hidden, ${mlp.paramCount()} params)`);
 
 		const lossHistory = [];
 		const t0 = performance.now();
@@ -1226,11 +1226,11 @@ export class App {
 		const dt = (performance.now() - t0) / 1000;
 
 		this.attitudePitchMlp = mlp;
-		this.stack.attitude.setPitchArm('nn', mlp);
-		document.getElementById('pitch_arm_mode').value = 'nn';
+		this.stack.attitude.setPitchMode('nn', mlp);
+		document.getElementById('pitch_mode').value = 'nn';
 		const finalLoss = lossHistory.at(-1);
 		stats.textContent = `done: loss=${finalLoss.toExponential(3)}	(${dt.toFixed(1)}s) — using NN`;
-		this.ui.log(this.tSim, `pitch-arm NN trained: final loss=${finalLoss.toExponential(3)} in ${dt.toFixed(1)}s, switched to NN`);
+		this.ui.log(this.tSim, `pitch NN trained: final loss=${finalLoss.toExponential(3)} in ${dt.toFixed(1)}s, switched to NN`);
 	}
 
 	drawLossPlot(losses) {

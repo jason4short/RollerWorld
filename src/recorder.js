@@ -14,7 +14,7 @@
 //   kind: 'cascade_mixer'    distill the Mixer's velocity → tilt step
 //     vel_lpf, vel_target, pitch_target
 //
-//   kind: 'cascade_pitch'    distill Attitude's pitch arm
+//   kind: 'cascade_pitch'    distill Attitude's pitch
 //     pitch, pitch_rate, pitch_target, force_fwd
 //
 // The pedagogy: random sampling covers the whole input envelope and the NN
@@ -56,7 +56,7 @@ export class Recorder {
 		});
 	}
 
-	// Cascade Attitude pitch arm: pitch state + target → force.
+	// Cascade Attitude pitch: pitch state + target → force.
 	recordCascadePitch({ pitch, pitch_rate, pitch_target, force_fwd }) {
 		if (!this.recording) return;
 		this.data.push({
@@ -65,7 +65,7 @@ export class Recorder {
 		});
 	}
 
-	// Cascade Attitude yaw arm: heading_err + yaw_rate → torque.
+	// Cascade Attitude yaw: heading_err + yaw_rate → torque.
 	recordCascadeYaw({ heading_err, yaw_rate, torque_yaw }) {
 		if (!this.recording) return;
 		this.data.push({

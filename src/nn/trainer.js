@@ -262,10 +262,10 @@ export class NNTrainer {
 		return losses;
 	}
 
-	// ── Attitude pitch-arm distillation ───────────────────────────────────
+	// ── Attitude pitch distillation ───────────────────────────────────
 	// Tighter problem than whole-stack: 3 inputs, 1 output, no inner-loop
-	// state to imitate. The teacher is `Attitude.computePitchArmRule`, the
-	// stateless PD that the rule-based pitch arm delegates to. The MLP
+	// state to imitate. The teacher is `Attitude.computePitchRule`, the
+	// stateless PD that the rule-based pitch delegates to. The MLP
 	// learns to approximate that function over the input envelope.
 	//
 	// Why this is a better-shaped NN problem than the legacy whole-stack:
@@ -276,8 +276,8 @@ export class NNTrainer {
 	// learned-controller problems, but the failure modes are easy to see.
 
 	generateAttitudePitchBatch(n, attGains) {
-		const inScale  = Attitude.PITCH_ARM_INPUT_SCALES;
-		const outScale = 1 / Attitude.PITCH_ARM_OUTPUT_SCALE;
+		const inScale  = Attitude.PITCH_INPUT_SCALES;
+		const outScale = 1 / Attitude.PITCH_OUTPUT_SCALE;
 		const r = (lo, hi) => lo + Math.random() * (hi - lo);
 
 		const inputs  = new Array(n);
@@ -286,7 +286,7 @@ export class NNTrainer {
 			const pitch        = r(-Math.PI / 3, Math.PI / 3);   // ±60°
 			const pitch_rate   = r(-10, 10);                     // ±10 rad/s
 			const pitch_target = r(-Math.PI / 6, Math.PI / 6);   // ±30°
-			const force = Attitude.computePitchArmRule(
+			const force = Attitude.computePitchRule(
 				{ pitch, pitch_rate, pitch_target }, attGains,
 			);
 			const row = new Float64Array(3);
@@ -365,8 +365,8 @@ export class NNTrainer {
 	}
 
 	prepareAttitudePitchRecorded(data) {
-		const inScale  = Attitude.PITCH_ARM_INPUT_SCALES;
-		const outScale = 1 / Attitude.PITCH_ARM_OUTPUT_SCALE;
+		const inScale  = Attitude.PITCH_INPUT_SCALES;
+		const outScale = 1 / Attitude.PITCH_OUTPUT_SCALE;
 		const rows = data.filter(d => d.kind === 'cascade_pitch');
 		const inputs  = new Array(rows.length);
 		const targets = new Array(rows.length);
@@ -382,14 +382,14 @@ export class NNTrainer {
 		return { inputs, targets };
 	}
 
-	// ── Attitude yaw-arm distillation ─────────────────────────────────────
+	// ── Attitude yaw distillation ─────────────────────────────────────
 	// Inputs: heading_err (wrapped to ±π), yaw_rate. Output: torque_yaw.
-	// Even simpler than the pitch arm — no auto-trim, just an angle→rate→
+	// Even simpler than the pitch — no auto-trim, just an angle→rate→
 	// torque cascade with two clamps.
 
 	generateAttitudeYawBatch(n, attGains) {
-		const inScale  = Attitude.YAW_ARM_INPUT_SCALES;
-		const outScale = 1 / Attitude.YAW_ARM_OUTPUT_SCALE;
+		const inScale  = Attitude.YAW_INPUT_SCALES;
+		const outScale = 1 / Attitude.YAW_OUTPUT_SCALE;
 		const r = (lo, hi) => lo + Math.random() * (hi - lo);
 
 		const inputs  = new Array(n);
@@ -397,7 +397,7 @@ export class NNTrainer {
 		for (let i = 0; i < n; i++) {
 			const heading_err = r(-Math.PI, Math.PI);
 			const yaw_rate    = r(-10, 10);
-			const torque = Attitude.computeYawArmRule(
+			const torque = Attitude.computeYawRule(
 				{ heading_err, yaw_rate }, attGains,
 			);
 			const row = new Float64Array(2);
@@ -410,8 +410,8 @@ export class NNTrainer {
 	}
 
 	prepareAttitudeYawRecorded(data) {
-		const inScale  = Attitude.YAW_ARM_INPUT_SCALES;
-		const outScale = 1 / Attitude.YAW_ARM_OUTPUT_SCALE;
+		const inScale  = Attitude.YAW_INPUT_SCALES;
+		const outScale = 1 / Attitude.YAW_OUTPUT_SCALE;
 		const rows = data.filter(d => d.kind === 'cascade_yaw');
 		const inputs  = new Array(rows.length);
 		const targets = new Array(rows.length);

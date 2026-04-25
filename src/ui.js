@@ -191,9 +191,9 @@ export class UI {
     'nav_linear_zone', 'nav_lookahead', 'nav_tiltLimit',
     // Nav (yaw)
     'Kheading', 'MaxYawRate', 'yaw_disable_radius', 'yaw_speed_softness',
-    // Cascade — Attitude pitch arm
+    // Cascade — Attitude pitch
     'att_pitch_P', 'att_pitch_D', 'att_pitch_I', 'att_force_max',
-    // Cascade — Attitude yaw arm
+    // Cascade — Attitude yaw
     'att_heading_P', 'att_yaw_rate_max', 'att_yaw_rate_P', 'att_torque_max',
     // Cascade — Wheels
     'wheelbase', 'force_P', 'force_I', 'force_I_max', 'deadband_extra',
@@ -202,7 +202,7 @@ export class UI {
     'disturbForceImpulse', 'disturbTauImpulse', 'disturbImuBias',
     // NN training params (nnHidden, nnEpochs, nnSamples, nnLR) intentionally
     // omitted — those are session-level workbench settings, not bot tunings.
-    // Same for the per-layer NN mode selects (pitch_arm_mode etc.) — they
+    // Same for the per-layer NN mode selects (pitch_mode etc.) — they
     // depend on whether the user has trained an NN this session.
   ];
 
