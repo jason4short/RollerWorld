@@ -74,6 +74,15 @@ export class Recorder {
 		});
 	}
 
+	// Cascade Wheels: chassis force/torque + state → per-wheel PWM.
+	recordCascadeWheels({ force_fwd, torque_yaw, vel_cart, yaw_rate, pwm_left, pwm_right }) {
+		if (!this.recording) return;
+		this.data.push({
+			kind: 'cascade_wheels',
+			force_fwd, torque_yaw, vel_cart, yaw_rate, pwm_left, pwm_right,
+		});
+	}
+
 	// Bulk serialize — useful for offline training or inspection.
 	toJSON() {
 		return JSON.stringify({

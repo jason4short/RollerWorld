@@ -541,6 +541,14 @@ export class App {
 								yaw_rate:    this.measured.yaw_rate,
 								torque_yaw:  this.stack.attitude.lastTorqueYaw,
 							});
+							this.recorder.recordCascadeWheels({
+								force_fwd:   this.stack.attOut.force_fwd,
+								torque_yaw:  this.stack.attOut.torque_yaw,
+								vel_cart:    this.measured.vel_cart,
+								yaw_rate:    this.measured.yaw_rate,
+								pwm_left:    out.wheelOut.pwm_left,
+								pwm_right:   out.wheelOut.pwm_right,
+							});
 						}
 					} else {
 						const measInner = controller instanceof PIDController
@@ -776,6 +784,19 @@ export class App {
 			}
 			this.stack.attitude.setYawArm(mode, mlp);
 			this.ui.log(this.tSim, `yaw arm: ${mode}`);
+		};
+
+		document.getElementById('btnTrainWheelsNN').onclick = () => this.trainWheelsNN();
+		document.getElementById('wheels_mode').onchange = e => {
+			const mode = e.target.value;
+			const mlp = this.wheelsMlp ?? null;
+			if (mode === 'nn' && !mlp) {
+				this.ui.log(this.tSim, 'no trained wheels NN yet — staying on rule');
+				e.target.value = 'rule';
+				return;
+			}
+			this.stack.wheels.setMode(mode, mlp);
+			this.ui.log(this.tSim, `wheels: ${mode}`);
 		};
 
 		document.getElementById('btnCalibrate').onclick = () => this.calibrateMotor();
@@ -1068,6 +1089,48 @@ export class App {
 		const finalLoss = lossHistory.at(-1);
 		stats.textContent = `done: loss=${finalLoss.toExponential(3)}	(${dt.toFixed(1)}s) — using NN`;
 		this.ui.log(this.tSim, `mixer NN trained: final loss=${finalLoss.toExponential(3)} in ${dt.toFixed(1)}s, switched to NN`);
+	}
+
+	async trainWheelsNN() {
+		const hidden  = +document.getElementById('nnHidden').value;
+		const epochs  = Math.max(50, +document.getElementById('nnEpochs').value);
+		const samples = +document.getElementById('nnSamples').value;
+		const lr      = +document.getElementById('nnLR').value;
+		const stats   = document.getElementById('wheelsNNStats');
+
+		const mode = document.getElementById('nnMode').value;
+		const recordedCount = this.recorder.count('cascade_wheels');
+		if (mode === 'recorded' && recordedCount < 50) {
+			this.ui.log(this.tSim, `need more recorded cascade_wheels samples (have ${recordedCount}, want ≥50)`);
+			return;
+		}
+
+		const mlp = new MLP(4, hidden, 2);
+		const wheelGains = this.ui.readCascadeGains().wheels;
+		const srcDesc = mode === 'random' ? `${samples} random/epoch` : `${recordedCount} recorded`;
+		stats.textContent = `training (${mode}): 0/${epochs}, ${srcDesc}, ${mlp.paramCount()} params`;
+		this.ui.log(this.tSim, `training wheels NN (${mode}, ${hidden} hidden, ${mlp.paramCount()} params)`);
+
+		const lossHistory = [];
+		const t0 = performance.now();
+		await this.nnTrainer.trainWheels({
+			mlp, wheelGains, motor: this.motor,
+			mode, data: this.recorder.data,
+			epochs, samplesPerEpoch: samples, lr, momentum: 0.9,
+			onProgress: (e, loss) => {
+				lossHistory.push(loss);
+				stats.textContent = `epoch ${e + 1}/${epochs}	loss=${loss.toExponential(3)}`;
+				this.drawLossPlot(lossHistory);
+			},
+		});
+		const dt = (performance.now() - t0) / 1000;
+
+		this.wheelsMlp = mlp;
+		this.stack.wheels.setMode('nn', mlp);
+		document.getElementById('wheels_mode').value = 'nn';
+		const finalLoss = lossHistory.at(-1);
+		stats.textContent = `done: loss=${finalLoss.toExponential(3)}	(${dt.toFixed(1)}s) — using NN (FF only)`;
+		this.ui.log(this.tSim, `wheels NN trained: final loss=${finalLoss.toExponential(3)} in ${dt.toFixed(1)}s, switched to NN`);
 	}
 
 	async trainAttitudeYawNN() {
