@@ -64,6 +64,23 @@ export class WorldRenderer3D {
 		this.controls.maxPolarAngle = Math.PI * 0.49;   // don't go below ground
 		this.controls.target.set(0, 0.4, 0);
 
+		// Auto-recenter: after a beat of no interaction, smoothly slew the
+		// camera around to a third-person behind-the-bot pose. Distance and
+		// height are captured from the user's last manual pose so spinning
+		// in close gives a close auto-pose, spinning out gives a wider one.
+		this.userInteracting     = false;
+		this.lastInteractionTime = 0;        // 0 ⇒ auto-follow on first load
+		this.followDistance      = null;     // populated on first interaction-end
+		this.followHeight        = null;
+		this.controls.addEventListener('start', () => { this.userInteracting = true; });
+		this.controls.addEventListener('end',   () => {
+			this.userInteracting = false;
+			this.lastInteractionTime = performance.now();
+			const off = this.camera.position.clone().sub(this.controls.target);
+			this.followDistance = Math.hypot(off.x, off.z);
+			this.followHeight   = off.y;
+		});
+
 		// Bot — group containing wheels and a body subgroup that pivots for pitch.
 		this.bot = new THREE.Group();
 		this.scene.add(this.bot);
@@ -341,15 +358,40 @@ export class WorldRenderer3D {
 			}
 		}
 
-		// Camera follows the bot. We move the OrbitControls target to the
-		// bot's position each frame, and shift the camera by the same delta
-		// so the user's chosen viewing angle/distance is preserved while
-		// the bot drives.
-		// Focus a bit higher above the ground for the wider zoom-out view.
+		// Camera follows the bot. Two modes:
+		//
+		//   user-orbit (recent drag): camera pans with the bot, view angle
+		//     preserved. The user's chosen pose stays put.
+		//
+		//   auto-follow (idle > 2.5 s): camera smoothly slews around to a
+		//     third-person view directly behind the bot, at the user's last
+		//     captured distance + height. LPF coefficient ~0.025 → ~1.5 s
+		//     time constant. Fast enough to feel responsive, slow enough to
+		//     not lurch.
+		//
+		// The bot's forward in world coords is (cos(h), -sin(h)) for (x, z),
+		// matching the plant's heading convention. "Behind" the bot is the
+		// negation: (-cos(h), +sin(h)).
 		const focusY = Math.max(0.6, L * 0.8);
 		const newTarget = new THREE.Vector3(state.x, focusY, state.z);
-		const delta = newTarget.clone().sub(this.controls.target);
-		this.camera.position.add(delta);
+		const idleSec = (performance.now() - this.lastInteractionTime) / 1000;
+		const autoFollow = !this.userInteracting && idleSec > 2.5;
+
+		if (autoFollow) {
+			const D = this.followDistance ?? 6;
+			const H = this.followHeight   ?? 3;
+			const desX = state.x - D * Math.cos(state.heading);
+			const desZ = state.z + D * Math.sin(state.heading);
+			const desY = focusY + H;
+			const alpha = 0.025;
+			this.camera.position.x += (desX - this.camera.position.x) * alpha;
+			this.camera.position.y += (desY - this.camera.position.y) * alpha;
+			this.camera.position.z += (desZ - this.camera.position.z) * alpha;
+		} else {
+			// Translate camera with the bot so the user's orbit is preserved.
+			const delta = newTarget.clone().sub(this.controls.target);
+			this.camera.position.add(delta);
+		}
 		this.controls.target.copy(newTarget);
 		this.controls.update();
 
