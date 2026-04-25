@@ -68,6 +68,7 @@ export class WorldRenderer3D {
 		// camera around to a third-person behind-the-bot pose. Distance and
 		// height are captured from the user's last manual pose so spinning
 		// in close gives a close auto-pose, spinning out gives a wider one.
+		this.autoFollowEnabled   = true;     // app toggles via setAutoFollow()
 		this.userInteracting     = false;
 		this.lastInteractionTime = 0;        // 0 ⇒ auto-follow on first load
 		this.followDistance      = null;     // populated on first interaction-end
@@ -275,6 +276,12 @@ export class WorldRenderer3D {
 		return g;
 	}
 
+	// Toggle the auto-recenter behavior. When false, the camera always
+	// pans-with-bot and never rotates around to behind it.
+	setAutoFollow(enabled) {
+		this.autoFollowEnabled = !!enabled;
+	}
+
 	// path: array of {x, z} — Planner's current path. Drawn as a thin
 	// cyan polyline a hair above ground so it's visible against grass.
 	setPath(path) {
@@ -375,7 +382,7 @@ export class WorldRenderer3D {
 		const focusY = Math.max(0.6, L * 0.8);
 		const newTarget = new THREE.Vector3(state.x, focusY, state.z);
 		const idleSec = (performance.now() - this.lastInteractionTime) / 1000;
-		const autoFollow = !this.userInteracting && idleSec > 2.5;
+		const autoFollow = this.autoFollowEnabled && !this.userInteracting && idleSec > 2.5;
 
 		if (autoFollow) {
 			const D = this.followDistance ?? 6;

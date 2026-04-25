@@ -644,6 +644,17 @@ export class App {
 			this.ui.log(this.tSim, `shove: +${shove_rate.toFixed(1)} rad/s tip`);
 		};
 
+		// Camera-follow toggle. ON (default): camera auto-recenters behind
+		// the bot after idle. OFF: camera holds whatever pose you orbit to,
+		// pans with the bot, never rotates around.
+		const btnCamFollow = document.getElementById('btnCamFollow');
+		btnCamFollow.onclick = () => {
+			const enabled = !btnCamFollow.classList.contains('active');
+			btnCamFollow.classList.toggle('active', enabled);
+			this.renderer.setAutoFollow(enabled);
+			this.ui.log(this.tSim, `camera follow: ${enabled ? 'on' : 'off'}`);
+		};
+
 		// Disturbances — instantaneous state kicks, plus a toggleable IMU bias.
 		// Force impulse → Δv = J / (M+m). Yaw impulse → Δω = J / I_yaw.
 		const pushChassis = sign => {

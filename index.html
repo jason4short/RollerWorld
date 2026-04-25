@@ -27,6 +27,7 @@
   button.alt { background:#444; }
   button.warn { background:#a42; }
   #worldButtons button, #pilotButtons button { box-shadow: 0 1px 2px rgba(0,0,0,.6); }
+  #worldButtons button.active { background:#2a4; }
   #pilotButtons button.active { background:#2a4; }
   #pilotButtons button:disabled { cursor:default; opacity:.55; }
   #pilotButtons button.active:disabled { opacity:1; background:#2a4; color:#fff; }
@@ -44,6 +45,8 @@
       <button id="btnRun">Start</button>
       <button id="btnReset" class="alt">Reset</button>
       <button id="btnPush" class="alt">Shove</button>
+      <button id="btnCamFollow" class="alt active"
+        title="Auto-recenter camera behind the bot after a brief idle. Click to keep your free orbit pose.">Cam ⟳</button>
     </div>
     <div id="pilotButtons" style="position:absolute; right:10px; top:10px; display:flex; gap:6px">
       <button id="btnPilotAngle" class="alt" title="Raw tilt — arrow keys drive pitch_target directly">Angle</button>
