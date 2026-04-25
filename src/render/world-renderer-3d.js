@@ -106,6 +106,15 @@ export class WorldRenderer3D {
 		this.pathLine.visible = false;
 		this.scene.add(this.pathLine);
 
+		// Occupancy-grid overlay — a CanvasTexture mapped onto a horizontal
+		// plane just above the ground. Sized to match the grid's world extent
+		// at construction time via setOccupancyGrid().
+		this.gridCanvas  = document.createElement('canvas');
+		this.gridTexture = new THREE.CanvasTexture(this.gridCanvas);
+		this.gridTexture.magFilter = THREE.NearestFilter;
+		this.gridTexture.minFilter = THREE.NearestFilter;
+		this.gridMesh = null;   // built on first setOccupancyGrid call
+
 		// Lidar rays — N short line segments from the bot to each scan hit.
 		// Vertex colors so the Safety governor can highlight clipping rays.
 		this.lidarLines = new THREE.LineSegments(
@@ -290,6 +299,53 @@ export class WorldRenderer3D {
 	// pans-with-bot and never rotates around to behind it.
 	setAutoFollow(enabled) {
 		this.autoFollowEnabled = !!enabled;
+	}
+
+	// Repaint the occupancy-grid overlay from the grid's current log-odds.
+	// Pass null to hide.
+	setOccupancyGrid(grid) {
+		if (!grid) {
+			if (this.gridMesh) this.gridMesh.visible = false;
+			return;
+		}
+		// Build the mesh once, sized to the grid's world extent.
+		if (!this.gridMesh) {
+			this.gridCanvas.width  = grid.cols;
+			this.gridCanvas.height = grid.rows;
+			const w = grid.cols * grid.cellSize;
+			const h = grid.rows * grid.cellSize;
+			this.gridMesh = new THREE.Mesh(
+				new THREE.PlaneGeometry(w, h),
+				new THREE.MeshBasicMaterial({
+					map: this.gridTexture, transparent: true, depthWrite: false,
+				}),
+			);
+			this.gridMesh.rotation.x = -Math.PI / 2;
+			this.gridMesh.rotation.z =  Math.PI;     // canvas (i, j) → world (x, z) sign flip
+			this.gridMesh.position.set(grid.originX + w / 2, 0.025, grid.originZ + h / 2);
+			this.scene.add(this.gridMesh);
+		}
+		// Repaint the canvas from grid.lo. Dark = occupied, pale = free,
+		// fully transparent = unknown.
+		const ctx = this.gridCanvas.getContext('2d');
+		const img = ctx.getImageData(0, 0, grid.cols, grid.rows);
+		const d = img.data;
+		for (let j = 0; j < grid.rows; j++) {
+			for (let i = 0; i < grid.cols; i++) {
+				const lo = grid.lo[j * grid.cols + i];
+				const k = (j * grid.cols + i) * 4;
+				if (lo > 0.5) {
+					d[k+0] = 30;  d[k+1] = 30;  d[k+2] = 30;  d[k+3] = 235;
+				} else if (lo < -0.5) {
+					d[k+0] = 230; d[k+1] = 230; d[k+2] = 250; d[k+3] = 70;
+				} else {
+					d[k+3] = 0;
+				}
+			}
+		}
+		ctx.putImageData(img, 0, 0);
+		this.gridTexture.needsUpdate = true;
+		this.gridMesh.visible = true;
 	}
 
 	// rays: array of { hit_x, hit_z } from Lidar.scan(). Drawn as line

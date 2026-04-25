@@ -2,6 +2,7 @@ import { Pendulum }							from './physics/pendulum.js';
 import { Motor }								 from './physics/motor.js';
 import { Sensors }							 from './physics/sensors.js';
 import { Lidar }								 from './physics/lidar.js';
+import { OccupancyGrid }				 from './world/occupancy_grid.js';
 import { PIDController }				 from './controllers/pid.js';
 import { ArduBalanceController } from './controllers/ardubalance.js';
 import { NavController }				 from './controllers/nav.js';
@@ -53,6 +54,13 @@ export class App {
 		this.planner			= new Planner();
 		this.lidar				= new Lidar({ rays: 24, maxRange: 5 });
 		this.lidarEnabled		= true;
+		// Occupancy grid built up from accumulated lidar scans. Sized to
+		// cover the demo course with margin; cell size 0.25m matches the
+		// planner's grid resolution.
+		this.occupancyGrid		= new OccupancyGrid({
+			originX: -5, originZ: -4, width: 25, height: 8, cellSize: 0.25,
+		});
+		this._lastReplanT		= 0;
 		this.currentTab			= 'control';   // 'control' | 'sim'
 
 		// Disturbance state — biases / impulses injected by the Disturbances
@@ -210,6 +218,12 @@ export class App {
 		}
 		this.renderer.setLidar(lidarRays, this.plant.state, highlight);
 
+		// Occupancy grid overlay — only meaningful when a lidar planner is
+		// in use, so don't clutter the world otherwise.
+		this.renderer.setOccupancyGrid(
+			this.planner.mode === 'lidar_astar' ? this.occupancyGrid : null,
+		);
+
 		// Periodic safety log so the numbers behind the brake are visible.
 		// Throttled to ~2 Hz when actively clipping; silent otherwise.
 		if (this.controllerType === 'cascade' && this.stack.safety.lastScale < 0.999) {
@@ -349,6 +363,27 @@ export class App {
 			const navDt = Math.max(0.001, Math.min(0.1, (ts - (this._lastNavTs || ts)) / 1000));
 			this._lastNavTs = ts;
 
+			// Periodic replan in lidar_astar mode. The bot's map of the world
+			// changes as it drives — a path planned 5 s ago against an empty
+			// map needs to detour around walls discovered since. Replans
+			// from the bot's current position to the original goal and
+			// replaces the waypoint queue wholesale.
+			if (this.planner.mode === 'lidar_astar' && this.planner.goal
+			    && (ts - this._lastReplanT) > 1000) {
+				this._lastReplanT = ts;
+				const start = this.measured ?? this.plant.state;
+				const path = this.planner.plan(
+					{ x: start.x, z: start.z ?? 0 }, this.planner.goal,
+					{ obstacles: this.occupancyGrid, res: 0.25, pad: 0.25 },
+				);
+				if (path.length > 0) {
+					this.waypoints.length = 0;
+					this.waypoints.push(...path);
+					this.nav.target_x = path[0].x;
+					this.nav.target_z = path[0].z;
+				}
+			}
+
 
 			// Input priority: FBW pilot (joystick) > nav waypoint > raw arrow tilt.
 			// Two parallel routings:
@@ -453,6 +488,16 @@ export class App {
 					// from `measured.lidar`; the renderer reads it for viz.
 					if (this.lidarEnabled) {
 						this.measured.lidar = this.lidar.scan(this.plant.state, this.renderer.obstacles);
+						// Integrate the scan into the occupancy grid — bot's
+						// accumulating belief about the world. The lidar_astar
+						// planner mode reads from this grid, not from ground
+						// truth, which is why the bot's path can change as it
+						// drives and discovers more.
+						this.occupancyGrid.integrateScan(
+							{ x: this.plant.state.x, z: this.plant.state.z ?? 0 },
+							this.measured.lidar,
+							this.lidar.maxRange,
+						);
 					}
 					this.dueSensor += dtSensor;
 				}
@@ -829,10 +874,15 @@ export class App {
 
 		document.getElementById('btnTrainNavNN').onclick = () => this.trainNavNN();
 
-		// Planner mode (Direct vs A*) — applies on the next shift+click.
+		// Planner mode (Direct / A* ground truth / A* lidar map). Applies on
+		// the next shift+click and on the next periodic replan tick.
 		document.getElementById('plannerMode').onchange = e => {
 			this.planner.setMode(e.target.value);
 			this.ui.log(this.tSim, `planner: ${e.target.value}`);
+		};
+		document.getElementById('btnForgetMap').onclick = () => {
+			this.occupancyGrid.clear();
+			this.ui.log(this.tSim, 'occupancy map cleared');
 		};
 		document.getElementById('nav_mode_nn').onchange = e => {
 			const mode = e.target.value;
@@ -902,9 +952,14 @@ export class App {
 			const start = this.waypoints.length > 0
 				? this.waypoints[this.waypoints.length - 1]
 				: (this.measured ?? this.plant.state);
+			// lidar_astar plans on the bot's accumulated map (bot's view);
+			// astar/direct use ground-truth obstacles (cheating, but useful
+			// as a teaching contrast).
+			const obstacles = this.planner.mode === 'lidar_astar'
+				? this.occupancyGrid : this.renderer.obstacles;
 			const path  = this.planner.plan(
 				{ x: start.x, z: start.z ?? 0 }, hit,
-				{ obstacles: this.renderer.obstacles, res: 0.25, pad: 0.25 },
+				{ obstacles, res: 0.25, pad: 0.25 },
 			);
 			// First segment of A* output is the start point itself; drop it
 			// when extending so we don't queue a redundant "go to where I

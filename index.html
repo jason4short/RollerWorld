@@ -161,9 +161,16 @@
     <label>Planner
       <select id="plannerMode">
         <option value="direct" selected>Direct (point and go)</option>
-        <option value="astar">A* (route around walls)</option>
+        <option value="astar">A* (ground truth — cheating)</option>
+        <option value="lidar_astar">A* (lidar-discovered map)</option>
       </select>
     </label>
+    <div class="row" style="margin-top:4px">
+      <button id="btnForgetMap" class="alt">Forget map</button>
+    </div>
+    <div style="font-size:11px; color:#666; margin-top:2px">
+      Lidar A* plans on what the bot has actually seen. Drive around to fill in the map.
+    </div>
     <div data-navmode="pd">
       <label>Kp (rad/m)    <input type="number" id="Kp_nav" value="0.15" step="0.01"></label>
     </div>
