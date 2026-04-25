@@ -22,7 +22,10 @@
   button { background:#2a4; color:#fff; border:0; padding:6px 10px; border-radius:4px; cursor:pointer; margin-right:4px; }
   button.alt { background:#444; }
   button.warn { background:#a42; }
-  #worldButtons button { box-shadow: 0 1px 2px rgba(0,0,0,.6); }
+  #worldButtons button, #pilotButtons button { box-shadow: 0 1px 2px rgba(0,0,0,.6); }
+  #pilotButtons button.active { background:#2a4; }
+  #pilotButtons button:disabled { cursor:default; opacity:.55; }
+  #pilotButtons button.active:disabled { opacity:1; background:#2a4; color:#fff; }
   .row { display:flex; gap:4px; flex-wrap:wrap; }
   .stat { font-variant-numeric: tabular-nums; color:#8ab; }
   #log { max-height: 140px; overflow:auto; font:11px ui-monospace,monospace; background:#000; padding:6px; border:1px solid #222; }
@@ -38,6 +41,20 @@
       <button id="btnReset" class="alt">Reset</button>
       <button id="btnPush" class="alt">Shove</button>
     </div>
+    <div id="pilotButtons" style="position:absolute; right:10px; top:10px; display:flex; gap:6px">
+      <button id="btnPilotAngle" class="alt" title="Raw tilt — arrow keys drive pitch_target directly">Angle</button>
+      <button id="btnPilotFbw"   class="alt" title="Fly-by-wire — joystick drives velocity">FBW</button>
+      <button id="btnPilotAuto"  class="alt" disabled
+        title="Auto engages when waypoints are queued (shift+click world). Disengages when the queue empties.">Auto</button>
+    </div>
+    <!-- Hidden mode select: source of truth for pilotMode, driven by the
+         buttons above and shift+click on the world. Kept in the DOM so
+         ui.readPilotMode() stays a one-liner. -->
+    <select id="pilotMode" style="display:none">
+      <option value="fbw" selected>Fly-by-wire</option>
+      <option value="auto">Auto</option>
+      <option value="raw">Raw tilt</option>
+    </select>
     <canvas id="joystick" width="144" height="144"
       style="position:absolute; right:10px; bottom:10px;
              width:144px; height:144px; aspect-ratio:1;
@@ -127,20 +144,6 @@
     </div>
   </details>
 
-  <details class="panel" open>
-    <summary>Pilot (FBW)</summary>
-    <label>Mode
-      <select id="pilotMode">
-        <option value="fbw" selected>Fly-by-wire (joystick)</option>
-        <option value="auto">Auto (nav waypoint)</option>
-        <option value="raw">Raw tilt (arrow keys)</option>
-      </select>
-    </label>
-    <div style="color:#666; font-size:11px; text-align:center">
-      Joystick is overlaid on the world canvas (lower-right) when in FBW or Raw modes.<br>
-      ↑ forward · ↓ back · ←/→ yaw · release = active brake
-    </div>
-  </details>
 
   <details class="panel" open>
     <summary>Navigation</summary>

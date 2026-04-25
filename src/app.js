@@ -201,6 +201,16 @@ export class App {
 		if (!joy) return;
 		const mode = this.ui.readPilotMode();
 		joy.style.display = (mode === 'auto') ? 'none' : '';
+
+		// Sync the canvas-overlay pilot buttons too. Angle/FBW reflect
+		// the current mode; Auto indicator lights up only in auto.
+		const setActive = (id, on) => {
+			const el = document.getElementById(id);
+			if (el) el.classList.toggle('active', on);
+		};
+		setActive('btnPilotAngle', mode === 'raw');
+		setActive('btnPilotFbw',   mode === 'fbw');
+		setActive('btnPilotAuto',  mode === 'auto');
 	}
 
 	// Animated diagram of the cascade. Four rooms stacked top-down with
@@ -701,6 +711,20 @@ export class App {
 			document.getElementById('btnRun').textContent = 'Start';
 			this.reset();
 		};
+
+		// Pilot mode buttons (canvas overlay). Angle and FBW are clickable;
+		// Auto is a status indicator that lights up only while waypoints
+		// are queued, and disengages automatically when the queue empties.
+		const setPilotMode = mode => {
+			const sel = document.getElementById('pilotMode');
+			if (sel.value !== mode) {
+				sel.value = mode;
+				sel.dispatchEvent(new Event('change'));
+			}
+			if (mode !== 'auto') this.waypoints.length = 0;   // exit cleanly
+		};
+		document.getElementById('btnPilotAngle').onclick = () => setPilotMode('raw');
+		document.getElementById('btnPilotFbw').onclick   = () => setPilotMode('fbw');
 
 		document.getElementById('btnPush').onclick = () => {
 			const shove_rate = this.ui.num('shoveOmega');
