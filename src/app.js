@@ -299,6 +299,17 @@ export class App {
 			const dtOuter	= 1 / Math.max(1, rates.outerHz);
 			const dtInner	= 1 / Math.max(1, rates.innerHz);
 
+			if (isCascade) {
+				// Map the existing rate UI onto cascade layers. Nav is fixed at
+				// 60 Hz (it represents the "human-perceptible" decision rate).
+				this.stack.setRates({
+					nav:      60,
+					mixer:    rates.outerHz,
+					attitude: rates.outerHz,
+					wheels:   rates.innerHz,
+				});
+			}
+
 			while (this.acc >= this.DT) {
 				// --- Sensor sample (runs at sensorHz) ---
 				this.dueSensor -= this.DT;
