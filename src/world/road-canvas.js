@@ -28,7 +28,13 @@ export class RoadCanvas {
 		this.canvas = document.createElement('canvas');
 		this.canvas.width  = this.W;
 		this.canvas.height = this.H;
-		this.ctx = this.canvas.getContext('2d');
+		// willReadFrequently=true tells the browser to keep this canvas
+		// in software-readable form. We snapshot the pixel buffer once
+		// after draw() and the sensor only reads from `this.pixels`, so
+		// strictly this is no longer hot per-frame — but the flag also
+		// silences a (correct) console warning the browser emits any
+		// time getImageData lands on a GPU-backed canvas.
+		this.ctx = this.canvas.getContext('2d', { willReadFrequently: true });
 
 		this.draw();
 	}
