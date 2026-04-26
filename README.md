@@ -1,4 +1,4 @@
-# Roller
+# RollerWorld
 
 Browser-based 2-wheel balance-bot simulator. Vanilla ES modules, no build step — open `index.html` via a local server and the bot runs.
 
