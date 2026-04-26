@@ -233,6 +233,13 @@ export class WorldRenderer3D {
 		);
 		const ray = new THREE.Raycaster();
 		ray.setFromCamera(ndc, this.camera);
+		// Hit the actual heightfield mesh so a shift-click on a hilltop
+		// resolves to the (x, z) under the cursor, not the (x, z) where
+		// the ray would have crossed y=0 several meters past the hill.
+		const hits = ray.intersectObject(this.ground);
+		if (hits.length) return { x: hits[0].point.x, z: hits[0].point.z };
+		// Fallback to the flat plane for clicks that miss the mesh
+		// (e.g., clicks on the sky outside the ground extent).
 		const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
 		const hit = new THREE.Vector3();
 		if (!ray.ray.intersectPlane(plane, hit)) return null;
