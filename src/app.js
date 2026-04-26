@@ -1,28 +1,28 @@
-import { Pendulum }							from './physics/pendulum.js';
-import { Motor }								 from './physics/motor.js';
-import { Sensors }							 from './physics/sensors.js';
-import { Lidar }								 from './physics/lidar.js';
-import { RoadSensor }					 from './physics/road-sensor.js';
-import { OccupancyGrid }				 from './world/occupancy_grid.js';
-import { PIDController }				 from './controllers/pid.js';
-import { ArduBalanceController } from './controllers/ardubalance.js';
-import { NavController }				 from './controllers/nav.js';
-import { RoadController }				from './controllers/road.js';
-import { ReactiveNav }					 from './controllers/reactive-nav.js';
-import { YawController }				 from './controllers/yaw.js';
-import { NNController }					from './controllers/nn.js';
-import { ControllerStack }				from './controllers/stack/index.js';
-import { Planner }							from './controllers/stack/planner.js';
-import { MLP }									 from './nn/mlp.js';
-import { RNN }									 from './nn/rnn.js';
-import { NNTrainer }						 from './nn/trainer.js';
-import { WorldRenderer3D }			 from './render/world-renderer-3d.js';
-import { Plotter, PLOT_SIGNALS } from './render/plotter.js';
-import { UI }										from './ui.js';
-import { Recorder }							from './recorder.js';
-import { PRESETS }							 from './presets.js';
-import { MotorCalibrator }			 from './calibration.js';
-import { Joystick }							from './ui/joystick.js';
+import { Pendulum }					from './physics/pendulum.js';
+import { Motor }					from './physics/motor.js';
+import { Sensors }					from './physics/sensors.js';
+import { Lidar }					from './physics/lidar.js';
+import { RoadSensor }				from './physics/road-sensor.js';
+import { OccupancyGrid }			from './world/occupancy_grid.js';
+import { PIDController }			from './controllers/pid.js';
+import { ArduBalanceController } 	from './controllers/ardubalance.js';
+import { NavController }			from './controllers/nav.js';
+import { RoadController }			from './controllers/road.js';
+import { ReactiveNav }				from './controllers/reactive-nav.js';
+import { YawController }			from './controllers/yaw.js';
+import { NNController }				from './controllers/nn.js';
+import { ControllerStack }			from './controllers/stack/index.js';
+import { Planner }					from './controllers/stack/planner.js';
+import { MLP }						from './nn/mlp.js';
+import { RNN }						from './nn/rnn.js';
+import { NNTrainer }				from './nn/trainer.js';
+import { WorldRenderer3D }			from './render/world-renderer-3d.js';
+import { Plotter, PLOT_SIGNALS } 	from './render/plotter.js';
+import { UI }						from './ui.js';
+import { Recorder }					from './recorder.js';
+import { PRESETS }					from './presets.js';
+import { MotorCalibrator }			from './calibration.js';
+import { Joystick }					from './ui/joystick.js';
 
 // App — owns the simulation loop and wires everything together.
 //
@@ -35,61 +35,71 @@ import { Joystick }							from './ui/joystick.js';
 
 export class App {
 	constructor() {
-		this.DT = 1 / 500;
-		this.ui			 = new UI();
-		this.plant		= new Pendulum(this.ui.readParams());
-		this.motor		= new Motor(this.ui.readMotor());
-		this.sensors	= new Sensors();
-		this.measured = null;		 // most recent sensor sample, held between sensor ticks
-		this.lastForce = 0;			 // held between inner-loop ticks (ZOH)
+		// --- Sim core --------------------------------------------------
+		this.DT       = 1 / 500;          // physics integration step (s) — 500 Hz
+		this.ui       = new UI();         // wraps the DOM controls (sliders, selects, log)
+		this.plant    = new Pendulum(this.ui.readParams());   // 2D pendulum-on-wheels physics
+		this.motor    = new Motor(this.ui.readMotor());       // PWM → force model
+		this.sensors  = new Sensors();    // IMU + encoder noise/bias model on top of plant truth
+		this.measured = null;             // most recent sensor sample, held between sensor ticks
+		this.lastForce = 0;               // last commanded chassis force (N), held inner-tick to inner-tick (ZOH)
 
+		// --- Controllers (legacy, all share the same I/O) --------------
 		this.controllers = {
-			pid: new PIDController(),
-			ardubalance: new ArduBalanceController(),
-			nn: new NNController(),
+			pid:         new PIDController(),         // idealized PID baseline
+			ardubalance: new ArduBalanceController(), // legacy whole-stack reference (the firmware Roller is modeled on)
+			nn:          new NNController(),          // single-NN baseline trained to imitate ArduBalance
 		};
 
-		this.nnTrainer 			= new NNTrainer();
-		this.controllerType 	= this.ui.readController();
-		this.nav 				= new NavController();
-		this.road				= new RoadController();
-		this.reactiveNav		= new ReactiveNav();
-		this.yawController 		= new YawController();
-		this.stack 				= new ControllerStack();
-		this._lastStackOut		= null;
-		this.planner			= new Planner();
-		this.lidar				= new Lidar({ rays: 24, maxRange: 5 });
-		// Road sensor — bot's "color camera" for lane following. Same
-		// number of rays as the lidar so RoadController works unchanged.
-		// Range 8 m — enough to plan a corner, short enough that distant
-		// branches at a fork don't dominate the steering vote.
-		this.roadSensor			= new RoadSensor({ rays: 24, maxRange: 8 });
-		// Lidar runs ONLY when the lidar_astar planner is active — that's the
-		// one consumer that needs it. The two flags below are pure viz toggles.
-		this.showLidarRays		= true;    // ray segments in the world
-		this.showMapGrid		= false;   // occupancy-grid overlay
+		this.nnTrainer       = new NNTrainer();           // shared trainer for all NN modes
+		this.controllerType  = this.ui.readController();  // which legacy controller is active: 'pid' | 'ardubalance' | 'nn' | 'cascade'
+		this.nav             = new NavController();       // waypoint / FBW pilot → tilt + yaw_rate
+		this.road            = new RoadController();      // reactive lidar/color sensor → virtual stick (Road pilot mode)
+		this.reactiveNav     = new ReactiveNav();         // goal-biased FTG: waypoint + lidar → virtual stick (Auto + planner=reactive)
+		this.yawController   = new YawController();       // legacy yaw branch for the pre-cascade controllers
+		this.stack           = new ControllerStack();     // modern cascade: Nav → Mixer → Attitude → Wheels
+		this._lastStackOut   = null;                      // cached last cascade output; for plot panels between firings
+		this.planner         = new Planner();             // path planner (direct / astar / lidar_astar / reactive)
+
+		// --- Sensors beyond IMU/encoder --------------------------------
+		this.lidar = new Lidar({ rays: 24, maxRange: 5 });    // 24-ray fan, 5 m range
+		// Road sensor — bot's "color camera" for lane following. Same ray
+		// count as the lidar so RoadController works unchanged. Range 8 m
+		// — enough to plan a corner, short enough that distant branches
+		// at a fork don't dominate the steering vote.
+		this.roadSensor = new RoadSensor({ rays: 24, maxRange: 8 });
+
+		// --- Visualization toggles -------------------------------------
+		this.showLidarRays = true;    // draw ray segments from bot to first hit
+		this.showMapGrid   = false;   // overlay accumulated occupancy grid (only meaningful in lidar_astar mode)
+
 		// Occupancy grid built up from accumulated lidar scans. Sized to
-		// cover the demo course with margin; cell size 0.25m matches the
-		// planner's grid resolution.
-		this.occupancyGrid		= new OccupancyGrid({
+		// cover the park footprint with margin; cellSize 0.25 m matches
+		// the planner's grid resolution.
+		this.occupancyGrid = new OccupancyGrid({
 			originX: -12, originZ: -6, width: 26, height: 14, cellSize: 0.25,
 		});
-		this._lastReplanT		= 0;
-		this.currentTab			= 'control';   // 'control' | 'sim'
+		this._lastReplanT = 0;        // sim-time of last lidar_astar replan (for ~1 Hz throttle)
+		this.currentTab   = 'control'; // sidebar tab — 'control' | 'sim'
 
-		// Disturbance state — biases / impulses injected by the Disturbances
-		// panel. Impulses are applied as instantaneous state kicks; bias is
-		// added to the sensor pitch reading every tick while enabled.
-		this.imuBiasInjected = 0;
-		this.calibrator 		= new MotorCalibrator({ dt: this.DT });
-		const joyEl 			= document.getElementById('joystick');
-		this.joystick 			= joyEl ? new Joystick(joyEl) : null;
-		this.recorder 			= new Recorder();
-		this.renderer 			= new WorldRenderer3D(document.getElementById('world'));
-		this.plotter			= new Plotter(document.getElementById('plot'));
-		// Per-layer inset plots inside each cascade panel — let the visitor
-		// see each layer's input/output rolling alongside its gain panel.
-		// Short window (3 s) so transients are vivid without scrolling.
+		// --- Disturbance state -----------------------------------------
+		// Biases / impulses injected from the Disturbances panel. Impulses
+		// are applied as instantaneous state kicks (handled in the click
+		// handlers); imuBiasInjected is added to the sensor pitch reading
+		// every tick while non-zero.
+		this.imuBiasInjected = 0;          // rad — additive bias on sensors.pitch (the bot DOESN'T know)
+
+		// --- Tooling ---------------------------------------------------
+		this.calibrator = new MotorCalibrator({ dt: this.DT });   // motor PWM-deadband / linearity sweep
+		const joyEl     = document.getElementById('joystick');
+		this.joystick   = joyEl ? new Joystick(joyEl) : null;     // on-screen stick for FBW pilot mode
+		this.recorder   = new Recorder();                         // captures (state, output) tuples for offline NN training
+		this.renderer   = new WorldRenderer3D(document.getElementById('world'));   // three.js scene + camera + obstacles
+		this.plotter    = new Plotter(document.getElementById('plot'));            // main scrolling time-series plot
+
+		// Per-layer inset plots inside each cascade panel — visitor sees each
+		// layer's I/O rolling alongside its gain panel. Short 3 s window so
+		// transients are vivid without scrolling.
 		this.panelPlots = {
 			mixer:  new Plotter(document.getElementById('plotMixer'),    3),
 			pitch:  new Plotter(document.getElementById('plotAttPitch'), 3),
@@ -97,35 +107,41 @@ export class App {
 			wheels: new Plotter(document.getElementById('plotWheels'),   3),
 		};
 
-		this.running 	= false;
-		this.tSim		= 0;
-		this.history 	= [];
-		this.acc		= 0;
-		this.lastT	 	= 0;
+		// --- Loop bookkeeping ------------------------------------------
+		this.running       = false;   // sim ticking? toggled by the Start/Pause button
+		this.tSim          = 0;       // sim-time elapsed since last reset (s) — log timestamps use this
+		this.history       = [];      // ring of recent state samples for the plotter
+		this.accumulator   = 0;       // wall-clock seconds banked, waiting to be consumed by physics steps
+		this.lastTimeStamp = 0;       // previous frame's rAF timestamp (ms) — used to compute frame dt
 
-		// Time until each sub-loop is due to run (s).
-		this.dueSensor 	= 0;
-		this.dueOuter	= 0;
-		this.dueInner	= 0;
+		// Per-loop "time until next firing" counters (s). Each subloop
+		// decrements its dueX every physics step; when dueX <= 0, the loop
+		// fires and dueX is bumped by its period. Time-based scheduling
+		// (vs ArduPilot-style modulo counter) so rates can be any Hz, not
+		// just integer divisors of the base rate.
+		this.dueSensor = 0;   // sensor sampling (sensorHz)
+		this.dueOuter  = 0;   // outer attitude / mixer loop (outerHz, legacy controllers)
+		this.dueInner  = 0;   // inner motor / wheels loop (innerHz)
 
-		// Keyboard pilot command: target tilt angle (rad) that the active
-		// controller drives toward. Left/right arrows hold to lean.
-		// Pilot directly sets a target tilt — hold ↑/↓ to lean, bot accelerates
-		// while leaned. Release → tilt = 0, bot returns to upright and coasts
-		// to a stop via friction. Simple and stable.
-		this.pilotTilt			= 0;
-		this.pilotTiltMax 		= 10 * (Math.PI / 180);
-		this.pilotYawRate		= 0;
-		this.pilotYawRateMax 	= 6.0; // rad/s (~340°/s — match real bot)
+		// --- Keyboard pilot state --------------------------------------
+		// Pilot directly sets a tilt target — hold ↑/↓ to lean, bot
+		// accelerates while leaned. Release → tilt = 0, bot returns
+		// upright and coasts to a stop via friction. Simple and stable.
+		this.pilotTilt        = 0;                       // current pilot-commanded tilt (rad)
+		this.pilotTiltMax     = 10 * (Math.PI / 180);    // hold-key tilt limit (rad) — 10°
+		this.pilotYawRate     = 0;                       // current pilot-commanded yaw rate (rad/s)
+		this.pilotYawRateMax  = 6.0;                     // arrow-key yaw rate limit (rad/s) — ~340°/s, matches real bot
+
 		// Cascade tilt-mode integrates pilotYawRate into a heading reference
-		// so arrow-key turns produce a real heading_target the Attitude layer
-		// can track. Same trick as FBW's heading integration, but here it
-		// lives on App since arrow keys are an app-level pilot input.
-		this.pilotYawHeadingRef = 0;
-		this.lastTauYaw			= 0;
+		// so arrow-key turns produce a real heading_target the Attitude
+		// layer can track. Same trick as FBW's heading integration, but
+		// here it lives on App since arrow keys are an app-level pilot input.
+		this.pilotYawHeadingRef = 0;     // integrated pilot yaw command (rad)
+		this.lastTauYaw         = 0;     // last commanded yaw torque (N·m), held inner-tick to inner-tick (ZOH)
 
-		// Waypoint queue. Shift+click appends; Auto mode chases head, on
-		// arrival pops to the next, exits to FBW when empty.
+		// Waypoint queue. Shift+click on the world appends; Auto pilot
+		// chases the head, on arrival pops to the next, kicks back to FBW
+		// when empty.
 		this.waypoints = [];
 
 		this.wireUI();
@@ -352,17 +368,17 @@ export class App {
 		return out;
 	}
 
-	tick(ts) {
+	tick(timestamp) {
 		if (this.running) {
-			if (!this.lastT) this.lastT = ts;
-			this.acc += Math.min(0.05, (ts - this.lastT) / 1000);
+			if (!this.lastTimeStamp) this.lastTimeStamp = timestamp;
+			this.accumulator += Math.min(0.05, (timestamp - this.lastTimeStamp) / 1000);
 
-			this.lastT 			= ts;
-			const params		= this.ui.readParams();
-			const gains			= this.currentGains();
-			const sensorCfg 	= this.ui.readSensors();
-			const rates			= this.ui.readRates();
-			this.plant.params 	= params;
+			this.lastTimeStamp 			= timestamp;
+			const params				= this.ui.readParams();
+			const gains					= this.currentGains();
+			const sensorCfg 			= this.ui.readSensors();
+			const rates					= this.ui.readRates();
+			this.plant.params 			= params;
 			
 			Object.assign(this.motor, this.ui.readMotor());
 
@@ -376,8 +392,8 @@ export class App {
 			// Nav runs once per animation frame (~60 Hz). Approximate its dt from
 			// wall-clock elapsed so its internal LPF is rate-correct regardless
 			// of browser frame pacing.
-			const navDt = Math.max(0.001, Math.min(0.1, (ts - (this._lastNavTs || ts)) / 1000));
-			this._lastNavTs = ts;
+			const navDt = Math.max(0.001, Math.min(0.1, (timestamp - (this._lastNavTs || timestamp)) / 1000));
+			this._lastNavTs = timestamp;
 
 			// Replan in lidar_astar mode — but ONLY when the current path is
 			// invalidated by newly-mapped walls (LOS broken on some segment),
@@ -408,13 +424,13 @@ export class App {
 					}
 					prev = wp;
 				}
-				const sinceLast = ts - this._lastReplanT;
+				const sinceLast = timestamp - this._lastReplanT;
 				const stale     = sinceLast > 10000;   // 10s refresh
 				const canReplan = sinceLast > 1500;    // hysteresis: min 1.5s between
 				const noPath = this.waypoints.length === 0;
 
 				if ((pathBlocked && canReplan) || stale || noPath) {
-					this._lastReplanT = ts;
+					this._lastReplanT = timestamp;
 					const path = this.planner.plan(
 						startPos, this.planner.goal,
 						{ obstacles: this.occupancyGrid, res: 0.25, pad: 0.6 },
@@ -452,6 +468,7 @@ export class App {
 				// bot, easier to drive with a softer turning rate.
 				const FBW_YAW_SCALE = 0.25;
 				const stick	= { fwd: s.y, yaw: -s.x * FBW_YAW_SCALE };
+
 				if (isCascade) {
 					cascadeCommand = { mode: 'fbw', stick };
 				} else {
@@ -562,7 +579,7 @@ export class App {
 				});
 			}
 
-			while (this.acc >= this.DT) {
+			while (this.accumulator >= this.DT) {
 				// --- Sensor sample (runs at sensorHz) ---
 				this.dueSensor -= this.DT;
 				if (this.dueSensor <= 0 || this.measured === null) {
@@ -747,7 +764,7 @@ export class App {
 				});
 				
 				if (this.history.length > 5000) this.history.shift();
-				this.acc -= this.DT;
+				this.accumulator -= this.DT;
 
 				if (Math.abs(this.plant.state.pitch) > Math.PI / 2) {
 					this.running = false;
@@ -757,7 +774,7 @@ export class App {
 				}
 			}
 		} else {
-			this.lastT = ts;
+			this.lastTimeStamp = timestamp;
 		}
 
 		// Render every frame regardless of sim state — keeps OrbitControls
@@ -765,7 +782,7 @@ export class App {
 		// keeps the plotter/panel-plots up-to-date with their last data.
 		this.render();
 
-		requestAnimationFrame(ts => this.tick(ts));
+		requestAnimationFrame(timestamp => this.tick(timestamp));
 	}
 
 	// Sidebar visibility: a panel is shown iff its tab matches the active
