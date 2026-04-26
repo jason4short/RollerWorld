@@ -15,9 +15,13 @@
 // banding artifacts that low-octave Perlin can show without proper
 // fractal stacking.
 
-const A1 = 1.4,  FX1 = 0.045, FZ1 = 0.055, PX1 = 0.0,  PZ1 =  0.0;
-const A2 = 0.7,  FX2 = 0.115, FZ2 = 0.090, PX2 = 1.3,  PZ2 = -0.7;
-const A3 = 0.25, FX3 = 0.240, FZ3 = 0.220, PX3 = -2.0, PZ3 =  1.5;
+// Amplitudes are tuned for a hilly park — broad rolling landform on the
+// lowest octave (~4 m peaks), mid-scale waves on the second, fine-grain
+// rumple on the third. Combined max around 7 m, more than enough for
+// the bot to feel the slopes.
+const A1 = 4.2,  FX1 = 0.045, FZ1 = 0.055, PX1 = 0.0,  PZ1 =  0.0;
+const A2 = 2.1,  FX2 = 0.115, FZ2 = 0.090, PX2 = 1.3,  PZ2 = -0.7;
+const A3 = 0.75, FX3 = 0.240, FZ3 = 0.220, PX3 = -2.0, PZ3 =  1.5;
 
 export function heightAt(x, z) {
 	return (
