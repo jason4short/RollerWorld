@@ -1096,7 +1096,12 @@ export class App {
 		worldEl.addEventListener('click', e => {
 			if (!e.shiftKey) return;
 			let hit = this.renderer.screenToGround(e.clientX, e.clientY);
-			if (!hit) return;
+			if (!hit) {
+				this.ui.log(this.tSim, 'shift-click: screenToGround returned null');
+				return;
+			}
+			this.ui.log(this.tSim,
+				`shift-click: hit=(${hit.x.toFixed(2)}, ${hit.z.toFixed(2)})`);
 			// If the click landed inside a tree/boulder, snap to the
 			// nearest free spot so the flag is reachable. Without this,
 			// the reactive nav can never approach the goal — its own
