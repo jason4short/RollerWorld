@@ -8,6 +8,7 @@ import { PIDController }				 from './controllers/pid.js';
 import { ArduBalanceController } from './controllers/ardubalance.js';
 import { NavController }				 from './controllers/nav.js';
 import { RoadController }				from './controllers/road.js';
+import { ReactiveNav }					 from './controllers/reactive-nav.js';
 import { YawController }				 from './controllers/yaw.js';
 import { NNController }					from './controllers/nn.js';
 import { ControllerStack }				from './controllers/stack/index.js';
@@ -52,6 +53,7 @@ export class App {
 		this.controllerType 	= this.ui.readController();
 		this.nav 				= new NavController();
 		this.road				= new RoadController();
+		this.reactiveNav		= new ReactiveNav();
 		this.yawController 		= new YawController();
 		this.stack 				= new ControllerStack();
 		this._lastStackOut		= null;
@@ -227,7 +229,8 @@ export class App {
 		if (this.showLidarRays) {
 			if (this.ui.readPilotMode() === 'road' && this.measured?.road) {
 				raysToShow = this.measured.road;
-			} else if (this.planner.mode === 'lidar_astar' && this.measured?.lidar) {
+			} else if ((this.planner.mode === 'lidar_astar' || this.planner.mode === 'reactive')
+			           && this.measured?.lidar) {
 				raysToShow = this.measured.lidar;
 			}
 		}
@@ -459,7 +462,26 @@ export class App {
 				}
 
 			} else if (pilotMode === 'auto') {
-				if (isCascade) {
+				// Goal-biased reactive nav — when the planner is in 'reactive'
+				// mode, Auto pilot still has a waypoint, but obstacle
+				// avoidance is handled by FTG-on-lidar instead of A*. Plugs
+				// into the cascade through the FBW path as a virtual stick.
+				if (this.planner.mode === 'reactive') {
+					const stick = this.reactiveNav.update(
+						this.measured?.lidar,
+						this.plant.state,
+						{ x: this.nav.target_x, z: this.nav.target_z },
+						this.lidar.maxRange,
+					);
+					if (isCascade) {
+						cascadeCommand = { mode: 'fbw', stick };
+					} else {
+						const out = this.nav.updateFbw(this.measured || this.plant.state,
+							stick, this.ui.readNavGains(), navDt);
+						tiltSetpoint    = out.tilt;
+						yawRateSetpoint = out.yaw_rate;
+					}
+				} else if (isCascade) {
 					cascadeCommand = { mode: 'auto' };
 				} else {
 					const out = this.nav.update(this.measured || this.plant.state, this.ui.readNavGains(), navDt);
@@ -557,18 +579,23 @@ export class App {
 					if (this.ui.readPilotMode() === 'road') {
 						this.measured.road = this.roadSensor.scan(this.plant.state, this.renderer.roadCanvas);
 					}
-					if (this.planner.mode === 'lidar_astar') {
+					// Lidar scans whenever something downstream wants it: the
+					// lidar_astar planner, the reactive nav (Auto + planner=
+					// reactive), or someone with the lidar viz toggled on.
+					const lidarWanted = this.planner.mode === 'lidar_astar'
+					                 || this.planner.mode === 'reactive';
+					if (lidarWanted) {
 						this.measured.lidar = this.lidar.scan(this.plant.state, this.renderer.obstacles);
-						// Integrate the scan into the occupancy grid — bot's
-						// accumulating belief about the world. The lidar_astar
-						// planner mode reads from this grid, not from ground
-						// truth, which is why the bot's path can change as it
-						// drives and discovers more.
-						this.occupancyGrid.integrateScan(
-							{ x: this.plant.state.x, z: this.plant.state.z ?? 0 },
-							this.measured.lidar,
-							this.lidar.maxRange,
-						);
+						// Only the lidar_astar mode integrates into the occupancy
+						// grid — that's where the "bot maps as it drives" lesson
+						// lives. Reactive nav uses raw scans without memory.
+						if (this.planner.mode === 'lidar_astar') {
+							this.occupancyGrid.integrateScan(
+								{ x: this.plant.state.x, z: this.plant.state.z ?? 0 },
+								this.measured.lidar,
+								this.lidar.maxRange,
+							);
+						}
 					}
 					this.dueSensor += dtSensor;
 				}
