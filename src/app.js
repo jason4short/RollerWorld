@@ -2,6 +2,7 @@ import { Pendulum }							from './physics/pendulum.js';
 import { Motor }								 from './physics/motor.js';
 import { Sensors }							 from './physics/sensors.js';
 import { Lidar }								 from './physics/lidar.js';
+import { RoadSensor }					 from './physics/road-sensor.js';
 import { OccupancyGrid }				 from './world/occupancy_grid.js';
 import { PIDController }				 from './controllers/pid.js';
 import { ArduBalanceController } from './controllers/ardubalance.js';
@@ -55,6 +56,11 @@ export class App {
 		this._lastStackOut		= null;
 		this.planner			= new Planner();
 		this.lidar				= new Lidar({ rays: 24, maxRange: 5 });
+		// Road sensor — bot's "color camera" for lane following. Same
+		// number of rays as the lidar so RoadController works unchanged.
+		// Range 8 m — enough to plan a corner, short enough that distant
+		// branches at a fork don't dominate the steering vote.
+		this.roadSensor			= new RoadSensor({ rays: 24, maxRange: 8 });
 		// Lidar runs ONLY when the lidar_astar planner is active — that's the
 		// one consumer that needs it. The two flags below are pure viz toggles.
 		this.showLidarRays		= false;   // ray segments in the world
@@ -211,15 +217,20 @@ export class App {
 			? [{ x: this.plant.state.x, z: this.plant.state.z ?? 0 }, ...this.waypoints]
 			: []);
 
-		// Lidar viz — rays are drawn when (a) the lidar is actually scanning
-		// (lidar_astar planner OR road pilot) and (b) the user has flipped
-		// the rays toggle on. Map grid only shows under lidar_astar since
-		// that's the only mode that integrates scans into it.
-		const lidarActive = this.planner.mode === 'lidar_astar'
-		                 || this.ui.readPilotMode() === 'road';
-		const lidarRays   = (lidarActive && this.showLidarRays && this.measured?.lidar)
-			? this.measured.lidar : null;
-		this.renderer.setLidar(lidarRays, this.plant.state, null);
+		// Sensor-ray viz — when the user has flipped the rays toggle on,
+		// show whichever sensor is actively scanning. Road sensor rays in
+		// road mode, lidar rays under the lidar_astar planner. The
+		// renderer's setLidar() takes any { angle, dist, hit_x, hit_z }
+		// list — the two sensors emit the same shape.
+		let raysToShow = null;
+		if (this.showLidarRays) {
+			if (this.ui.readPilotMode() === 'road' && this.measured?.road) {
+				raysToShow = this.measured.road;
+			} else if (this.planner.mode === 'lidar_astar' && this.measured?.lidar) {
+				raysToShow = this.measured.lidar;
+			}
+		}
+		this.renderer.setLidar(raysToShow, this.plant.state, null);
 		this.renderer.setOccupancyGrid(
 			(this.planner.mode === 'lidar_astar' && this.showMapGrid) ? this.occupancyGrid : null,
 		);
@@ -457,13 +468,14 @@ export class App {
 				this._advanceWaypointIfArrived();
 
 			} else if (pilotMode === 'road') {
-				// Reactive lidar pilot — turn the latest scan into a virtual
-				// FBW stick. Goes through the cascade's FBW path so velocity
-				// and yaw-rate tracking are handled by the existing Nav layer.
+				// Reactive road pilot — turn the latest color-sensor scan
+				// into a virtual FBW stick. Goes through the cascade's FBW
+				// path so velocity and yaw-rate tracking are handled by the
+				// existing Nav layer.
 				const stick = this.road.update(
-					this.measured?.lidar,
+					this.measured?.road,
 					this.plant.state.heading,
-					this.lidar.maxRange,
+					this.roadSensor.maxRange,
 				);
 				if (isCascade) {
 					cascadeCommand = { mode: 'fbw', stick };
@@ -540,7 +552,11 @@ export class App {
 					// Lidar is a sensor too — runs at sensorHz alongside the IMU
 					// and encoder. The Safety governor in the cascade reads it
 					// from `measured.lidar`; the renderer reads it for viz.
-					if (this.planner.mode === 'lidar_astar' || this.ui.readPilotMode() === 'road') {
+					// Road sensor scans whenever the road pilot is active.
+					if (this.ui.readPilotMode() === 'road') {
+						this.measured.road = this.roadSensor.scan(this.plant.state, this.renderer.roadCanvas);
+					}
+					if (this.planner.mode === 'lidar_astar') {
 						this.measured.lidar = this.lidar.scan(this.plant.state, this.renderer.obstacles);
 						// Integrate the scan into the occupancy grid — bot's
 						// accumulating belief about the world. The lidar_astar

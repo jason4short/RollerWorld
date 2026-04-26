@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { Obstacles }     from '../world/obstacles.js';
 import { RoadNetwork }   from '../world/road-network.js';
+import { RoadCanvas }    from '../world/road-canvas.js';
 import { heightAt }      from '../world/terrain.js';
 
 // 3D bot view using three.js. Same draw() interface as the 2D WorldRenderer:
@@ -54,23 +55,26 @@ export class WorldRenderer3D {
 		// function. PlaneGeometry is subdivided into a 200×200 grid of
 		// vertices over a 250 m × 250 m patch; each vertex gets its z
 		// (which becomes y after the rotation) displaced by heightAt(x, z).
-		// Same heightAt drives the road, the bot's render position, and
-		// (later) the slope-force disturbance — single source of truth.
+		// Same heightAt drives the road texture coords, the bot's render
+		// position, and the slope-force disturbance — single source of
+		// truth for anything height-related.
 		const GROUND_SIZE = 250;
 		const GROUND_SEGS = 200;
 		const groundGeom = new THREE.PlaneGeometry(GROUND_SIZE, GROUND_SIZE, GROUND_SEGS, GROUND_SEGS);
 		const gp = groundGeom.attributes.position;
 		for (let i = 0; i < gp.count; i++) {
-			// PlaneGeometry is built in the XY plane; we'll rotate it onto
-			// the XZ plane below. Before rotation, its "z" attribute is the
-			// height-axis we want to displace.
 			const x = gp.getX(i);
 			const y = gp.getY(i);
 			gp.setZ(i, heightAt(x, -y));
 		}
 		groundGeom.computeVertexNormals();
+		// Ground texture is the road-network canvas (built below). The
+		// painted asphalt-on-grass IS the road — no separate road meshes.
+		// The same canvas is the data source for the color sensor: bot
+		// drives on what its sensor sees.
+		this.GROUND_SIZE = GROUND_SIZE;   // expose for canvas mapping
 		const groundMat = new THREE.MeshStandardMaterial({
-			color: 0x5a7a3a, roughness: 1.0, metalness: 0,
+			roughness: 1.0, metalness: 0,
 			flatShading: true,    // chunky low-poly facets, not smoothed
 		});
 		this.ground = new THREE.Mesh(groundGeom, groundMat);
@@ -196,9 +200,21 @@ export class WorldRenderer3D {
 		// the centerline samples; later phases will paint a ground texture
 		// from the same data and feed a color sensor on the bot.
 		this.roadNetwork = new RoadNetwork().loadPark();
-		this.roadGroup   = new THREE.Group();
-		this.scene.add(this.roadGroup);
-		this._buildRoadMeshes();
+
+		// RoadCanvas paints the network into a 2D canvas. Used both as
+		// the ground texture (visible asphalt-on-grass) and as the data
+		// source for the bot's color sensor — single source of truth.
+		this.roadCanvas = new RoadCanvas(this.roadNetwork, {
+			worldSize: GROUND_SIZE, pxPerMeter: 8,
+		});
+		const roadTexture = new THREE.CanvasTexture(this.roadCanvas.canvas);
+		roadTexture.flipY     = false;
+		roadTexture.colorSpace = THREE.SRGBColorSpace;
+		roadTexture.minFilter = THREE.LinearMipmapLinearFilter;
+		roadTexture.magFilter = THREE.LinearFilter;
+		roadTexture.anisotropy = this.renderer.capabilities.getMaxAnisotropy();
+		groundMat.map = roadTexture;
+		groundMat.needsUpdate = true;
 
 		// Tree clusters scattered across the park, avoiding the roads.
 		this._buildTrees();
@@ -223,81 +239,6 @@ export class WorldRenderer3D {
 		return { x: hit.x, z: hit.z };
 	}
 
-	// Build a flat ribbon mesh per road edge: two vertices per centerline
-	// sample (left edge, right edge, offset by roadWidth/2 perpendicular
-	// to the tangent), triangulated as a strip. Sits a hair above the
-	// ground (y=0.02) so it doesn't z-fight with the ground plane.
-	// Blocked edges are skipped — phase 1.5 will drop a barrier wall at
-	// their midpoint instead.
-	_buildRoadMeshes() {
-		while (this.roadGroup.children.length) {
-			this.roadGroup.remove(this.roadGroup.children[0]);
-		}
-		const SAMPLES = 64;        // up from 32 — kills mid-curve faceting
-		const width   = this.roadNetwork.width;
-		const half    = width / 2;
-		const mat = new THREE.MeshStandardMaterial({
-			color: 0x3a2a20, roughness: 1.0, metalness: 0,
-		});
-
-		// Edge ribbons.
-		for (let ei = 0; ei < this.roadNetwork.edges.length; ei++) {
-			if (this.roadNetwork.edges[ei].blocked) continue;
-			const center = this.roadNetwork.sampleEdge(ei, SAMPLES);
-			const verts   = new Float32Array(center.length * 2 * 3);
-			const indices = [];
-
-			for (let i = 0; i < center.length; i++) {
-				const tx = center[i].tangent_x;
-				const tz = center[i].tangent_z;
-				// Perpendicular in the xz plane (90° CW so left edge is
-				// on the bot's left when traveling along the tangent).
-				const nx =  tz;
-				const nz = -tx;
-				const li = i * 6;
-				const lx = center[i].x + nx * half;
-				const lz = center[i].z + nz * half;
-				const rx = center[i].x - nx * half;
-				const rz = center[i].z - nz * half;
-				// Lift road samples to ride the terrain — each side of the
-				// ribbon samples the height function independently, so the
-				// road banks slightly across hills (looks more natural than
-				// keeping both edges at the centerline height).
-				verts[li + 0] = lx;
-				verts[li + 1] = heightAt(lx, lz) + 0.04;
-				verts[li + 2] = lz;
-				verts[li + 3] = rx;
-				verts[li + 4] = heightAt(rx, rz) + 0.04;
-				verts[li + 5] = rz;
-			}
-			for (let i = 0; i < center.length - 1; i++) {
-				const a = 2 * i,       b = 2 * i + 1;
-				const c = 2 * (i + 1), d = 2 * (i + 1) + 1;
-				indices.push(a, b, d, a, d, c);
-			}
-
-			const geom = new THREE.BufferGeometry();
-			geom.setAttribute('position', new THREE.BufferAttribute(verts, 3));
-			geom.setIndex(indices);
-			geom.computeVertexNormals();
-			const mesh = new THREE.Mesh(geom, mat);
-			mesh.receiveShadow = true;
-			this.roadGroup.add(mesh);
-		}
-
-		// Node discs — circular patches at every node, sized to cover the
-		// road width at any approach angle. Hides the seams where edges
-		// arriving from different directions don't naturally line up.
-		// Sits a hair above the edge ribbons so junctions read clean.
-		const discGeom = new THREE.CircleGeometry(width * 0.7, 24);
-		discGeom.rotateX(-Math.PI / 2);
-		for (const node of this.roadNetwork.nodes) {
-			const disc = new THREE.Mesh(discGeom, mat);
-			disc.position.set(node.x, heightAt(node.x, node.z) + 0.05, node.z);
-			disc.receiveShadow = true;
-			this.roadGroup.add(disc);
-		}
-	}
 
 	// Tree clusters scattered across the park. Each tree is a low-poly
 	// cone with a small trunk, randomly drawn from a 5-color autumn
@@ -394,9 +335,14 @@ export class WorldRenderer3D {
 		}
 	}
 
-	// Public hook for re-rendering after the network changes (e.g. a
-	// caller flipped an edge's `blocked` flag to test "single loop" mode).
-	rebuildRoad() { this._buildRoadMeshes(); }
+	// Public hook for re-painting the road after the network changes
+	// (e.g. a caller flipped an edge's `blocked` flag). Repaints the
+	// canvas and flags the texture for re-upload — the sensor's pixel
+	// buffer also updates because RoadCanvas.draw() refreshes it.
+	rebuildRoad() {
+		this.roadCanvas.draw();
+		if (this.ground.material.map) this.ground.material.map.needsUpdate = true;
+	}
 
 	_buildBot() {
 		// Wheels: solid black, oversized (visual scale ~1.5× the physics R) to
@@ -721,7 +667,7 @@ export class WorldRenderer3D {
 	// `highlight` is an optional same-length boolean array; highlighted
 	// rays are drawn red (safety clipping), unhighlighted yellow.
 	// Pass null/empty rays to hide.
-	setLidar(rays, botPos, highlight = null, height = 0.18) {
+	setLidar(rays, botPos, highlight = null, hover = 0.18) {
 		if (!rays || rays.length === 0) {
 			this.lidarLines.visible = false;
 			return;
@@ -729,14 +675,17 @@ export class WorldRenderer3D {
 		const N = rays.length;
 		const verts  = new Float32Array(N * 6);   // 2 verts × 3 floats per ray
 		const colors = new Float32Array(N * 6);   // 2 verts × 3 floats per ray
+		// Lift each endpoint to its terrain height + hover so rays run along
+		// the ground instead of floating at a fixed altitude.
+		const yBot = heightAt(botPos.x, botPos.z) + hover;
 		for (let i = 0; i < N; i++) {
 			const r = rays[i];
 			const j = i * 6;
 			verts[j + 0] = botPos.x;
-			verts[j + 1] = height;
+			verts[j + 1] = yBot;
 			verts[j + 2] = botPos.z;
 			verts[j + 3] = r.hit_x;
-			verts[j + 4] = height;
+			verts[j + 4] = heightAt(r.hit_x, r.hit_z) + hover;
 			verts[j + 5] = r.hit_z;
 			// Color: yellow normally, red when this ray triggered safety clipping.
 			const hot = highlight && highlight[i];
@@ -866,7 +815,8 @@ export class WorldRenderer3D {
 		if (navTarget !== null) {
 			this.target.visible = true;
 			const t = performance.now() * 0.001;
-			this.target.position.set(navTarget.x, 0.05 + 0.05 * Math.sin(t * 3), navTarget.z ?? 0);
+			const ty = heightAt(navTarget.x, navTarget.z ?? 0);
+			this.target.position.set(navTarget.x, ty + 0.05 + 0.05 * Math.sin(t * 3), navTarget.z ?? 0);
 			this.target.rotation.y = t * 0.8;
 		} else {
 			this.target.visible = false;
@@ -882,7 +832,7 @@ export class WorldRenderer3D {
 			const f = this.queueFlags[i];
 			if (i < queueRest.length) {
 				f.visible = true;
-				f.position.set(queueRest[i].x, 0, queueRest[i].z);
+				f.position.set(queueRest[i].x, heightAt(queueRest[i].x, queueRest[i].z), queueRest[i].z);
 			} else {
 				f.visible = false;
 			}
