@@ -781,20 +781,20 @@ export class App {
 			};
 		}
 
-		// Distillation method tabs (Train / Record). Sub-tab inside the NN
-		// distillation panel — not a sidebar tab. Toggles which content
-		// block is visible in column 1; loss curve and log don't change.
-		for (const btn of document.querySelectorAll('.distill-tab')) {
-			btn.onclick = () => {
-				const which = btn.dataset.distillTab;
-				for (const b of document.querySelectorAll('.distill-tab')) {
-					b.classList.toggle('active', b.dataset.distillTab === which);
-				}
-				for (const c of document.querySelectorAll('[data-distill-content]')) {
-					c.style.display = c.dataset.distillContent === which ? '' : 'none';
-				}
-			};
-		}
+		// Distillation method tabs (Train / Record). Event delegation so
+		// the binding is bulletproof regardless of when the tab buttons
+		// land in the DOM.
+		document.addEventListener('click', (e) => {
+			const btn = e.target.closest('.distill-tab');
+			if (!btn) return;
+			const which = btn.dataset.distillTab;
+			for (const b of document.querySelectorAll('.distill-tab')) {
+				b.classList.toggle('active', b.dataset.distillTab === which);
+			}
+			for (const c of document.querySelectorAll('[data-distill-content]')) {
+				c.style.display = c.dataset.distillContent === which ? '' : 'none';
+			}
+		});
 
 		// Pilot mode buttons (canvas overlay). Angle and FBW are clickable;
 		// Auto is a status indicator that lights up only while waypoints
