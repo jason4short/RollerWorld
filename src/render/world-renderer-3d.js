@@ -202,6 +202,9 @@ export class WorldRenderer3D {
 
 		// Tree clusters scattered across the park, avoiding the roads.
 		this._buildTrees();
+
+		// Boulders + cream stepping-stones — visual rhythm props.
+		this._buildProps();
 	}
 
 	// Convert a canvas-relative click to world-frame ground (y=0) coords.
@@ -479,6 +482,124 @@ export class WorldRenderer3D {
 		this.body.add(this.com);
 
 		this.rails = [];
+	}
+
+	// Scattered boulders + cream stepping-stones. Boulders are gray
+	// non-uniformly-scaled boxes spread anywhere on land (off-road, above
+	// water). Stones are smaller cream blocks placed near road centerlines
+	// — they sit as decorative path-side details, like trail markers.
+	// Same deterministic PRNG as the trees so the scenery is stable.
+	_buildProps() {
+		this.propGroup = new THREE.Group();
+		this.scene.add(this.propGroup);
+
+		// Distinct PRNG so adding/removing a tree doesn't shuffle the rocks.
+		let seed = 0xa5b3c7d9;
+		const rand = () => {
+			seed = (seed * 1664525 + 1013904223) >>> 0;
+			return seed / 0x100000000;
+		};
+
+		// Pre-build road sample list (same density as the tree avoidance).
+		const roadSamples = [];
+		for (let ei = 0; ei < this.roadNetwork.edges.length; ei++) {
+			const samples = this.roadNetwork.sampleEdge(ei, 32);
+			for (const s of samples) roadSamples.push(s);
+		}
+
+		const X_MIN = -55, X_MAX =  70;
+		const Z_MIN = -35, Z_MAX =  45;
+
+		// --- Boulders -------------------------------------------------------
+		const boulderMat = new THREE.MeshStandardMaterial({
+			color: 0x6b6358, roughness: 1.0, flatShading: true,
+		});
+		const boulderShade = new THREE.MeshStandardMaterial({
+			color: 0x8a8275, roughness: 1.0, flatShading: true,    // a lighter highlight color
+		});
+		const ROAD_AVOID = (this.roadNetwork.width / 2 + 1.0);
+		const ROAD_AVOID_SQ = ROAD_AVOID * ROAD_AVOID;
+
+		const TARGET_BOULDERS = 60;
+		let placed = 0, attempts = 0;
+		while (placed < TARGET_BOULDERS && attempts < TARGET_BOULDERS * 8) {
+			attempts++;
+			const x = X_MIN + rand() * (X_MAX - X_MIN);
+			const z = Z_MIN + rand() * (Z_MAX - Z_MIN);
+			const y = heightAt(x, z);
+			if (y < this.SEA_LEVEL + 0.2) continue;
+
+			let tooClose = false;
+			for (const s of roadSamples) {
+				const dx = x - s.x, dz = z - s.z;
+				if (dx * dx + dz * dz < ROAD_AVOID_SQ) { tooClose = true; break; }
+			}
+			if (tooClose) continue;
+
+			// Pair of overlapping boxes for a chunky non-cube silhouette.
+			const big = new THREE.Mesh(
+				new THREE.BoxGeometry(
+					0.8 + rand() * 1.4,
+					0.5 + rand() * 0.9,
+					0.7 + rand() * 1.2,
+				),
+				rand() < 0.5 ? boulderMat : boulderShade,
+			);
+			big.castShadow = true;
+			big.receiveShadow = true;
+			big.rotation.y = rand() * Math.PI * 2;
+			big.position.set(x, y + 0.25, z);
+			this.propGroup.add(big);
+			placed++;
+		}
+
+		// --- Cream stepping-stones along the roads ---------------------------
+		// Walk along each edge and drop a small stone every few meters at
+		// random offsets to either side of the road. Calmer than full
+		// pavement detailing, but adds rhythm.
+		const stoneMat = new THREE.MeshStandardMaterial({
+			color: 0xf2e6cf, roughness: 1.0, flatShading: true,
+		});
+		const STONE_SPACING = 6.0;       // m along centerline
+		const STONE_OFFSET  = this.roadNetwork.width / 2 + 0.7;   // m perpendicular
+
+		for (let ei = 0; ei < this.roadNetwork.edges.length; ei++) {
+			if (this.roadNetwork.edges[ei].blocked) continue;
+			const samples = this.roadNetwork.sampleEdge(ei, 80);
+			// Walk the centerline accumulating arclength; drop a stone each
+			// time we pass a multiple of STONE_SPACING.
+			let acc = 0;
+			let nextDrop = STONE_SPACING * (0.3 + rand() * 0.7);
+			for (let i = 1; i < samples.length; i++) {
+				const dx = samples[i].x - samples[i - 1].x;
+				const dz = samples[i].z - samples[i - 1].z;
+				const seg = Math.hypot(dx, dz);
+				acc += seg;
+				if (acc >= nextDrop) {
+					nextDrop = acc + STONE_SPACING * (0.7 + rand() * 0.6);
+					const tx = samples[i].tangent_x, tz = samples[i].tangent_z;
+					const nx =  tz, nz = -tx;
+					const side = rand() < 0.5 ? +1 : -1;
+					const off  = STONE_OFFSET + rand() * 0.4;
+					const sx = samples[i].x + nx * off * side;
+					const sz = samples[i].z + nz * off * side;
+					const sy = heightAt(sx, sz);
+					if (sy < this.SEA_LEVEL + 0.1) continue;
+					const stone = new THREE.Mesh(
+						new THREE.BoxGeometry(
+							0.45 + rand() * 0.25,
+							0.18 + rand() * 0.10,
+							0.45 + rand() * 0.25,
+						),
+						stoneMat,
+					);
+					stone.position.set(sx, sy + 0.08, sz);
+					stone.rotation.y = rand() * Math.PI * 2;
+					stone.receiveShadow = true;
+					this.propGroup.add(stone);
+				}
+			}
+		}
 	}
 
 	_buildPathTiles() {
