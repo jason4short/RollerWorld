@@ -47,16 +47,26 @@ export class Attitude {
 		this.lastYawRateRef = 0;
 		this.lastHeadingErr = 0;
 
-		// Per-branch pluggability: 'rule' (hand-written) or 'nn' (MLP).
+		// Per-branch pluggability: 'rule' (hand-written), 'nn' (MLP),
+		// or 'rnn' (recurrent net — has hidden state). The RNN slot is
+		// where temporal-feature lessons land: e.g., a feedforward NN
+		// can't survive an IMU bias drift because it has no memory of
+		// history, but an RNN can learn to be the auto-trim integrator
+		// from raw sensor sequences.
 		this.pitchMode = 'rule';
 		this.pitchMlp  = null;
+		this.pitchRnn  = null;
 		this.yawMode   = 'rule';
 		this.yawMlp    = null;
 	}
 
-	setPitchMode(mode, mlp = null) {
+	setPitchMode(mode, model = null) {
 		this.pitchMode = mode;
-		this.pitchMlp  = mlp;
+		if (mode === 'nn')  this.pitchMlp = model;
+		if (mode === 'rnn') {
+			this.pitchRnn = model;
+			if (this.pitchRnn) this.pitchRnn.resetRaw();   // start clean
+		}
 	}
 
 	setYawMode(mode, mlp = null) {
@@ -76,6 +86,9 @@ export class Attitude {
 		this.lastForceFwd   = 0;
 		this.lastTorqueYaw  = 0;
 		this.lastYawRateRef = 0;
+		// RNN keeps a hidden state across ticks — clear it on bot reset so
+		// the next run starts from a clean memory, same as balance_offset.
+		if (this.pitchRnn) this.pitchRnn.resetRaw();
 	}
 
 	// mixerOut: { pitch_target, yaw_target, heading_rate_ff }
@@ -93,8 +106,11 @@ export class Attitude {
 	}
 
 	_pitch(pitch_target, sensors, gains, dt) {
-		if (this.pitchMode === 'nn' && this.pitchMlp) {
+		if (this.pitchMode === 'nn'  && this.pitchMlp) {
 			return this._pitchNN(pitch_target, sensors, gains);
+		}
+		if (this.pitchMode === 'rnn' && this.pitchRnn) {
+			return this._pitchRNN(pitch_target, sensors, gains);
 		}
 		return this._pitchRule(pitch_target, sensors, gains, dt);
 	}
@@ -147,6 +163,28 @@ export class Attitude {
 			pitch_target       * inScale[2],
 		];
 		const y = this.pitchMlp.forward(x);
+		let force = y[0] * PITCH_OUTPUT_SCALE;
+		const fmax = gains.force_max;
+		if (force >  fmax) force =  fmax;
+		if (force < -fmax) force = -fmax;
+		return force;
+	}
+
+	// Pitch (RNN): same input shape as the feedforward NN (pitch,
+	// pitch_rate, pitch_target) but the network has internal hidden
+	// state that evolves between calls — so the output can depend on
+	// the history of inputs, not just the current sample. Inference
+	// uses the typed-array `stepRaw()` path; no autodiff at runtime.
+	// The hidden state lives inside the RNN object and persists across
+	// ticks until something explicitly calls `resetRaw()`.
+	_pitchRNN(pitch_target, sensors, gains) {
+		const inScale = PITCH_INPUT_SCALES;
+		const x = [
+			sensors.pitch      * inScale[0],
+			sensors.pitch_rate * inScale[1],
+			pitch_target       * inScale[2],
+		];
+		const y = this.pitchRnn.stepRaw(x);
 		let force = y[0] * PITCH_OUTPUT_SCALE;
 		const fmax = gains.force_max;
 		if (force >  fmax) force =  fmax;

@@ -13,6 +13,7 @@ import { NNController }					from './controllers/nn.js';
 import { ControllerStack }				from './controllers/stack/index.js';
 import { Planner }							from './controllers/stack/planner.js';
 import { MLP }									 from './nn/mlp.js';
+import { RNN }									 from './nn/rnn.js';
 import { NNTrainer }						 from './nn/trainer.js';
 import { WorldRenderer3D }			 from './render/world-renderer-3d.js';
 import { Plotter, PLOT_SIGNALS } from './render/plotter.js';
@@ -915,16 +916,29 @@ export class App {
 		setInterval(refreshRecStats, 250);
 
 		document.getElementById('btnTrainNN').onclick = () => this.trainNN();
-		document.getElementById('btnTrainPitchNN').onclick = () => this.trainAttitudePitchNN();
+		document.getElementById('btnTrainPitchNN').onclick  = () => this.trainAttitudePitchNN();
+		document.getElementById('btnTrainPitchRNN').onclick = () => this.trainAttitudePitchRNN();
 		document.getElementById('pitch_mode').onchange = e => {
 			const mode = e.target.value;
-			const mlp = this.attitudePitchMlp ?? null;
-			if (mode === 'nn' && !mlp) {
-				this.ui.log(this.tSim, 'no trained pitch NN yet — staying on rule');
-				e.target.value = 'rule';
-				return;
+			if (mode === 'nn') {
+				const mlp = this.attitudePitchMlp ?? null;
+				if (!mlp) {
+					this.ui.log(this.tSim, 'no trained pitch NN yet — staying on rule');
+					e.target.value = 'rule';
+					return;
+				}
+				this.stack.attitude.setPitchMode('nn', mlp);
+			} else if (mode === 'rnn') {
+				const rnn = this.attitudePitchRnn ?? null;
+				if (!rnn) {
+					this.ui.log(this.tSim, 'no trained pitch RNN yet — staying on rule');
+					e.target.value = 'rule';
+					return;
+				}
+				this.stack.attitude.setPitchMode('rnn', rnn);
+			} else {
+				this.stack.attitude.setPitchMode('rule');
 			}
-			this.stack.attitude.setPitchMode(mode, mlp);
 			this.ui.log(this.tSim, `pitch: ${mode}`);
 		};
 
@@ -1480,6 +1494,43 @@ export class App {
 		const finalLoss = lossHistory.at(-1);
 		stats.textContent = `done: loss=${finalLoss.toExponential(3)}	(${dt.toFixed(1)}s) — using NN`;
 		this.ui.log(this.tSim, `pitch NN trained: final loss=${finalLoss.toExponential(3)} in ${dt.toFixed(1)}s, switched to NN`);
+	}
+
+	async trainAttitudePitchRNN() {
+		const hidden  = +document.getElementById('rnnHidden').value || 12;
+		const epochs  = +document.getElementById('rnnEpochs').value || 200;
+		const seqLen  = +document.getElementById('rnnSeqLen').value || 8;
+		const lr      = +document.getElementById('rnnLR').value     || 0.05;
+		const stats   = document.getElementById('pitchRNNStats');
+
+		// 3 inputs (pitch, pitch_rate, pitch_target) → 1 output (force).
+		// Hidden state is what the rule controller's auto-trim integrator
+		// is — but learned, not hand-coded. (For now the training data
+		// has no temporal structure to learn; that's the next demo.)
+		const rnn = new RNN(3, hidden, 1);
+		const attGains = this.ui.readCascadeGains().attitude;
+		stats.textContent = `training RNN: 0/${epochs}, ${rnn.paramCount()} params, hidden=${hidden}, seq=${seqLen}`;
+		this.ui.log(this.tSim, `training pitch RNN (${hidden} hidden, seq=${seqLen}, ${rnn.paramCount()} params)`);
+
+		const lossHistory = [];
+		const t0 = performance.now();
+		await this.nnTrainer.trainAttitudePitchRNN({
+			rnn, attGains,
+			epochs, episodes: 20, seqLen, lr, gradClip: 1.0,
+			onProgress: (e, loss) => {
+				lossHistory.push(loss);
+				stats.textContent = `epoch ${e + 1}/${epochs}	loss=${loss.toExponential(3)}`;
+				this.drawLossPlot(lossHistory);
+			},
+		});
+		const dt = (performance.now() - t0) / 1000;
+
+		this.attitudePitchRnn = rnn;
+		this.stack.attitude.setPitchMode('rnn', rnn);
+		document.getElementById('pitch_mode').value = 'rnn';
+		const finalLoss = lossHistory.at(-1);
+		stats.textContent = `done: loss=${finalLoss.toExponential(3)}	(${dt.toFixed(1)}s) — using RNN`;
+		this.ui.log(this.tSim, `pitch RNN trained: final loss=${finalLoss.toExponential(3)} in ${dt.toFixed(1)}s, switched to RNN`);
 	}
 
 	drawLossPlot(losses) {

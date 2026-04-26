@@ -462,6 +462,76 @@ export class NNTrainer {
 		return losses;
 	}
 
+	// Train the RNN pitch controller via BPTT. Each "epoch" is `episodes`
+	// short sequences; the loss is summed across the sequence and
+	// loss.backward() walks the whole unrolled graph, accumulating
+	// gradients into the shared weights automatically.
+	//
+	// FIRST-CUT TRAINING DATA: each step samples a fresh random state
+	// from the same envelope as the feedforward NN, with the rule's
+	// force as the target. This doesn't really exercise the hidden
+	// state — there's no temporal structure to learn. The point of
+	// this first version is to confirm the BPTT wiring works and that
+	// the trained RNN matches the rule controller. The follow-on demo
+	// (bias-drift sequences with rule+auto-trim as teacher) is where
+	// the hidden state earns its keep.
+	async trainAttitudePitchRNN({ rnn, attGains,
+	                              epochs = 200, episodes = 20, seqLen = 8,
+	                              lr = 0.05, gradClip = 1.0, onProgress }) {
+		const inScale  = Attitude.PITCH_INPUT_SCALES;
+		const outScale = 1 / Attitude.PITCH_OUTPUT_SCALE;
+		const r = (lo, hi) => lo + Math.random() * (hi - lo);
+
+		const losses = [];
+		for (let e = 0; e < epochs; e++) {
+			let epochLoss = 0;
+			for (let ep = 0; ep < episodes; ep++) {
+				rnn.reset();
+				let loss = null;
+				for (let t = 0; t < seqLen; t++) {
+					const pitch        = r(-Math.PI / 3, Math.PI / 3);
+					const pitch_rate   = r(-10, 10);
+					const pitch_target = r(-Math.PI / 6, Math.PI / 6);
+					const x = [
+						pitch        * inScale[0],
+						pitch_rate   * inScale[1],
+						pitch_target * inScale[2],
+					];
+					const target = Attitude.computePitchRule(
+						{ pitch, pitch_rate, pitch_target }, attGains,
+					) * outScale;
+
+					const out = rnn.step(x);
+					const err = out[0].sub(target);
+					const sq  = err.mul(err);
+					loss = loss === null ? sq : loss.add(sq);
+				}
+				// Mean over sequence — keeps gradient magnitudes
+				// independent of seqLen so lr stays meaningful.
+				loss = loss.mul(1 / seqLen);
+
+				for (const p of rnn.parameters()) p.grad = 0;
+				loss.backward();
+
+				// Per-element gradient clipping. Shared weights accumulate
+				// gradient over every step; one bad step will spike them.
+				for (const p of rnn.parameters()) {
+					if (p.grad >  gradClip) p.grad =  gradClip;
+					if (p.grad < -gradClip) p.grad = -gradClip;
+				}
+				for (const p of rnn.parameters()) p.data -= lr * p.grad;
+				epochLoss += loss.data;
+			}
+			epochLoss /= episodes;
+			losses.push(epochLoss);
+			if (onProgress && (e % 2 === 0 || e === epochs - 1)) {
+				onProgress(e, epochLoss);
+				await new Promise(r => setTimeout(r, 0));
+			}
+		}
+		return losses;
+	}
+
 	// Train asynchronously — yields to the event loop so the UI can update.
 	//
 	// Random mode regenerates a fresh batch each epoch (infinite data).

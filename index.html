@@ -237,13 +237,23 @@
     <label>Pitch
       <select id="pitch_mode">
         <option value="rule" selected>Rule (PD + auto-trim)</option>
-        <option value="nn">Neural net (trained)</option>
+        <option value="nn">Neural net (feedforward)</option>
+        <option value="rnn">Recurrent neural net</option>
       </select>
     </label>
     <div class="row" style="margin-top:4px">
-      <button id="btnTrainPitchNN" class="warn">Train pitch NN</button>
+      <button id="btnTrainPitchNN"  class="warn">Train pitch NN</button>
+      <button id="btnTrainPitchRNN" class="warn">Train pitch RNN</button>
     </div>
-    <div id="pitchNNStats" style="font-size:11px; color:#888; margin-top:4px"></div>
+    <div id="pitchNNStats"  style="font-size:11px; color:#888; margin-top:4px"></div>
+    <div id="pitchRNNStats" style="font-size:11px; color:#888; margin-top:2px"></div>
+    <details style="margin-top:4px; font-size:11px; color:#aaa">
+      <summary>RNN hyperparameters</summary>
+      <label>hidden    <input type="number" id="rnnHidden" value="12"  step="1"></label>
+      <label>epochs    <input type="number" id="rnnEpochs" value="200" step="20"></label>
+      <label>seq len   <input type="number" id="rnnSeqLen" value="8"   step="1"></label>
+      <label>lr        <input type="number" id="rnnLR"     value="0.05" step="0.01"></label>
+    </details>
     <canvas id="plotAttPitch" width="260" height="70" style="margin-top:6px; width:100%; background:#0a0a0a; border:1px solid #222"></canvas>
   </details>
 
