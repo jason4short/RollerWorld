@@ -342,11 +342,13 @@ export class WorldRenderer3D {
 			// Register a collision footprint for A* and lidar — push
 			// directly into obstacles.items so we get the collision
 			// query without addWall's visible mesh duplicating the tree.
-			// Square ~30% bigger than the trunk to give the planner
-			// clearance for the lower foliage.
+			// Hitbox sized to the visible cone base (2 × baseRadius), so
+			// bigger trees give the planner more clearance and lidar
+			// returns a believable distance for what the bot can see.
+			const treeFootprint = 2 * baseRadius;
 			this.obstacles.items.push({
 				type: 'wall', position: [x, z],
-				length: 0.6, thickness: 0.6, yaw: 0,
+				length: treeFootprint, thickness: treeFootprint, yaw: 0,
 			});
 
 			placed++;
