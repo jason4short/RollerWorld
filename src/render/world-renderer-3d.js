@@ -760,10 +760,13 @@ export class WorldRenderer3D {
 			this.pathLine.visible = false;
 			return;
 		}
+		// Lift each vertex to the terrain so the polyline rides hills
+		// instead of floating at a fixed altitude. Small hover above
+		// ground keeps it visible against the road texture.
 		const verts = new Float32Array(path.length * 3);
 		for (let i = 0; i < path.length; i++) {
 			verts[i * 3 + 0] = path[i].x;
-			verts[i * 3 + 1] = 0.04;
+			verts[i * 3 + 1] = heightAt(path[i].x, path[i].z) + 0.06;
 			verts[i * 3 + 2] = path[i].z;
 		}
 		this.pathLine.geometry.setAttribute('position', new THREE.BufferAttribute(verts, 3));
