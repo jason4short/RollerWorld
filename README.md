@@ -2,7 +2,7 @@
 
 Browser-based 2-wheel balance-bot simulator. Vanilla ES modules, no build step — open `index.html` via a local server and the bot runs.
 
-Roller is the playground version of *ArduBalance* — the firmware that won the SparkFun Autonomous Vehicle Competition on a 2-wheel balance bot, a famously hard platform for that race. Same cascade architecture, same physics intuitions, but you can swap controllers from a dropdown, watch a neural net train layer-by-layer, drive through a procedural park world, and see why each piece of a real robot stack exists by turning it off and watching things fail.
+Roller is the playground version of *ArduBalance*. Same cascade architecture, same physics intuitions, but you can swap controllers from a dropdown, watch a neural net train layer-by-layer, drive through a procedural park world, and see why each piece of a real robot stack exists by turning it off and watching things fail.
 
 It's built as a teaching tool, not a product. Every layer exists to make a specific lesson visible.
 
@@ -52,7 +52,3 @@ Any layer can be swapped between rule-based and learned implementations from the
 - `PROJECT.md` — running log of decisions and milestones (newest on top)
 - `CLAUDE.md` — guidance for AI agents working on the codebase
 - `ArduBalance/` — the original firmware reference
-
-## Philosophy
-
-Roller is a **palace, not a factory**. Comments explain the *lesson*, not the syntax. If you find a `// magic` note, it's working notes from someone figuring it out, not a TODO. Clarity outranks brevity.
