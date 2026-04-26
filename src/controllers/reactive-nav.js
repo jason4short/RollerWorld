@@ -84,23 +84,28 @@ export class ReactiveNav {
 		}
 		if (curStart >= 0) gaps.push({ start: curStart, end: arc.length - 1 });
 
-		// 4) Score each gap: width + bias toward goal direction.
-		// Width is in radians; alignment is cos(diff) ∈ [-1, 1]. Their
-		// scales are roughly comparable for forward-arc gaps, so a single
-		// gain (GOAL_BIAS_GAIN) trades them off. Higher gain = bot
-		// prefers heading toward the goal even through narrower gaps.
+		// 4) Score each gap. The aim point inside a gap is the goal
+		// direction CLAMPED to the gap's range — so when the goal falls
+		// inside an open gap, the bot heads straight at the goal instead
+		// of at the gap's geometric center. (The previous version aimed
+		// at gap center regardless of goal — that's why the bot drove
+		// dead ahead even on clear stretches with the goal off to one
+		// side.) Score is alignment of the aim point with the goal,
+		// plus a small width bonus to prefer roomier gaps when there's
+		// a tie.
 		let bestGap = null;
 		let bestScore = -Infinity;
 		for (const g of gaps) {
 			const startBa  = arc[g.start].ba;
 			const endBa    = arc[g.end].ba;
-			const centerBa = (startBa + endBa) / 2;
 			const width    = endBa - startBa;
-			const alignment = Math.cos(centerBa - goalBa);
-			const score = width + GOAL_BIAS_GAIN * alignment;
+			const aimBa    = Math.max(startBa, Math.min(endBa, goalBa));
+			const alignment = Math.cos(aimBa - goalBa);
+			// alignment is the dominant term; width is a tiebreaker.
+			const score = GOAL_BIAS_GAIN * alignment + 0.2 * width;
 			if (score > bestScore) {
 				bestScore = score;
-				bestGap   = { centerBa, ...g };
+				bestGap   = { aimBa, ...g };
 			}
 		}
 
@@ -111,13 +116,13 @@ export class ReactiveNav {
 			return { fwd: MIN_FWD, yaw: 0 };
 		}
 
-		// 5) Output: aim at gap center, speed scaled by deepest ray
-		// inside the chosen gap.
+		// 5) Output: aim at the chosen gap's clamped-to-goal direction.
+		// Speed scaled by deepest ray inside the chosen gap.
 		let deepest = 0;
 		for (let i = bestGap.start; i <= bestGap.end; i++) {
 			if (arc[i].dist > deepest) deepest = arc[i].dist;
 		}
-		const yaw = Math.max(-1, Math.min(1, bestGap.centerBa / FORWARD_ARC));
+		const yaw = Math.max(-1, Math.min(1, bestGap.aimBa / FORWARD_ARC));
 		const speedFrac = Math.pow(deepest / maxRange, SPEED_EXPONENT);
 		const fwd = Math.max(MIN_FWD, speedFrac);
 		return { fwd, yaw };
