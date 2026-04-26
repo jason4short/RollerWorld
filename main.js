@@ -12,7 +12,20 @@ function resetNumberInputsToHtmlDefaults() {
 	}
 }
 
+// Same problem as the number inputs: Firefox (and others) restore SELECT
+// values across reloads, which silently overrides the HTML's `selected`
+// attribute. Force every select back to whichever <option selected> is
+// declared in the HTML so editing the markup actually changes what the
+// user sees on reload.
+function resetSelectsToHtmlDefaults() {
+	for (const sel of document.querySelectorAll('select')) {
+		const def = sel.querySelector('option[selected]');
+		if (def) sel.value = def.value;
+	}
+}
+
 window.addEventListener('DOMContentLoaded', () => {
 	resetNumberInputsToHtmlDefaults();
+	resetSelectsToHtmlDefaults();
 	window.app = new App();
 });

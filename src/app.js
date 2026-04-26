@@ -1025,9 +1025,15 @@ export class App {
 
 		document.getElementById('btnTrainNavNN').onclick = () => this.trainNavNN();
 
-		// Planner mode (Direct / A* ground truth / A* lidar map). Applies on
-		// the next shift+click and on the next periodic replan tick.
-		document.getElementById('plannerMode').onchange = e => {
+		// Planner mode (Direct / A* ground truth / A* lidar map / Reactive).
+		// Sync the planner instance to whatever the dropdown is showing
+		// at boot — Firefox restores SELECT values across reloads, which
+		// can leave the dropdown showing one thing and the planner
+		// defaulting to another. After this, change events keep them
+		// in sync.
+		const plannerSel = document.getElementById('plannerMode');
+		this.planner.setMode(plannerSel.value);
+		plannerSel.onchange = e => {
 			this.planner.setMode(e.target.value);
 			this.ui.log(this.tSim, `planner: ${e.target.value}`);
 		};
