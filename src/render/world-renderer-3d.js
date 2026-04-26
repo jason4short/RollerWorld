@@ -78,6 +78,22 @@ export class WorldRenderer3D {
 		this.ground.receiveShadow = true;
 		this.scene.add(this.ground);
 
+		// Water — a single flat plane at "sea level" that the terrain
+		// pokes up through. Where the heightfield dips below this y, the
+		// water is what we see; where it's above, the ground wins via the
+		// depth buffer. Sea level is chosen just below the deepest road
+		// segments so most of the network stays dry, while the very
+		// bottoms of valleys form ponds and streams.
+		this.SEA_LEVEL = -3.5;
+		const waterMat = new THREE.MeshStandardMaterial({
+			color: 0x3a8eaa, roughness: 0.25, metalness: 0.1,
+			transparent: true, opacity: 0.92,
+		});
+		this.water = new THREE.Mesh(new THREE.PlaneGeometry(GROUND_SIZE, GROUND_SIZE), waterMat);
+		this.water.rotation.x = -Math.PI / 2;
+		this.water.position.y = this.SEA_LEVEL;
+		this.scene.add(this.water);
+
 		// (Stepping-stones removed — the race-track world has its own walls
 		// as visual landmarks; tiles ended up overlapping them awkwardly.)
 
@@ -338,10 +354,15 @@ export class WorldRenderer3D {
 			}
 			if (tooClose) continue;
 
+			// Reject if underwater — trees would float on the surface
+			// otherwise. Skip a small margin above sea level too so we
+			// don't get trees with their feet in the water.
+			const y = heightAt(x, z);
+			if (y < this.SEA_LEVEL + 0.4) continue;
+
 			// Vary tree size a little so the forest has rhythm. Slightly
 			// taller, thinner trees on hills (where height > 0) for a hint
 			// of pine-on-mountain feel.
-			const y = heightAt(x, z);
 			const baseHeight = 1.6 + rand() * 1.8 + Math.max(0, y) * 0.3;
 			const baseRadius = 0.6 + rand() * 0.5;
 			const color = palette[(rand() * palette.length) | 0];
