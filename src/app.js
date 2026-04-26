@@ -66,8 +66,8 @@ export class App {
 		this.roadSensor			= new RoadSensor({ rays: 24, maxRange: 8 });
 		// Lidar runs ONLY when the lidar_astar planner is active — that's the
 		// one consumer that needs it. The two flags below are pure viz toggles.
-		this.showLidarRays		= false;   // ray segments in the world
-		this.showMapGrid		= true;    // occupancy-grid overlay
+		this.showLidarRays		= true;    // ray segments in the world
+		this.showMapGrid		= false;   // occupancy-grid overlay
 		// Occupancy grid built up from accumulated lidar scans. Sized to
 		// cover the demo course with margin; cell size 0.25m matches the
 		// planner's grid resolution.
