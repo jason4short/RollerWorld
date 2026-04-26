@@ -108,6 +108,28 @@ export class Obstacles {
 	// `pad` adds bot-radius padding so the planner routes around walls with
 	// a margin instead of grazing them.
 
+	// Snap a point to the nearest unblocked location (or return it
+	// unchanged if already free). Used by shift-click waypoint
+	// placement so a flag that lands inside a tree visually moves to
+	// the nearest open spot instead of becoming an unreachable goal.
+	// Spiral search at `step` resolution out to `maxRadius`; gives up
+	// and returns the original point if nothing nearby is free.
+	nearestFree(x, z, pad = 0.4, step = 0.25, maxRadius = 4) {
+		if (!this.isBlocked(x, z, pad)) return { x, z };
+		// Spiral by rings of increasing radius. At each ring sample N
+		// directions; first free one wins.
+		for (let r = step; r <= maxRadius; r += step) {
+			const samples = Math.max(8, Math.ceil((2 * Math.PI * r) / step));
+			for (let i = 0; i < samples; i++) {
+				const a = (i / samples) * 2 * Math.PI;
+				const sx = x + Math.cos(a) * r;
+				const sz = z + Math.sin(a) * r;
+				if (!this.isBlocked(sx, sz, pad)) return { x: sx, z: sz };
+			}
+		}
+		return { x, z };   // give up
+	}
+
 	isBlocked(x, z, pad = 0.2) {
 		for (const it of this.items) {
 			if (it.type !== 'wall') continue;

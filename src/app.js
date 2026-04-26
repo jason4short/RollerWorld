@@ -1089,8 +1089,20 @@ export class App {
 		const worldEl = document.getElementById('world');
 		worldEl.addEventListener('click', e => {
 			if (!e.shiftKey) return;
-			const hit = this.renderer.screenToGround(e.clientX, e.clientY);
+			let hit = this.renderer.screenToGround(e.clientX, e.clientY);
 			if (!hit) return;
+			// If the click landed inside a tree/boulder, snap to the
+			// nearest free spot so the flag is reachable. Without this,
+			// the reactive nav can never approach the goal — its own
+			// avoidance bubble keeps the bot out of the obstacle the
+			// goal is buried inside.
+			const snapped = this.renderer.obstacles.nearestFree(hit.x, hit.z, 0.4);
+			if (snapped.x !== hit.x || snapped.z !== hit.z) {
+				this.ui.log(this.tSim,
+					`flag snapped to nearest free spot (Δ=${
+						Math.hypot(snapped.x - hit.x, snapped.z - hit.z).toFixed(2)} m)`);
+				hit = snapped;
+			}
 
 			// Run the planner. In direct mode the path is just [hit]; in A*
 			// mode the planner routes around walls. Either way, the result
