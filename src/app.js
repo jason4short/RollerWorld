@@ -1102,7 +1102,7 @@ export class App {
 			// the reactive nav can never approach the goal — its own
 			// avoidance bubble keeps the bot out of the obstacle the
 			// goal is buried inside.
-			const snapped = this.renderer.obstacles.nearestFree(hit.x, hit.z, 0.4);
+			const snapped = this.renderer.obstacles.nearestFree(hit.x, hit.z, 1.2);
 			if (snapped.x !== hit.x || snapped.z !== hit.z) {
 				this.ui.log(this.tSim,
 					`flag snapped to nearest free spot (Δ=${

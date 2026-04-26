@@ -111,10 +111,14 @@ export class Obstacles {
 	// Snap a point to the nearest unblocked location (or return it
 	// unchanged if already free). Used by shift-click waypoint
 	// placement so a flag that lands inside a tree visually moves to
-	// the nearest open spot instead of becoming an unreachable goal.
+	// the nearest open spot the bot can actually arrive at — not just
+	// outside the tree's AABB, but with enough room around the flag
+	// for the reactive nav's avoidance bubble to settle into arrival
+	// range. Default pad of 1.2 m covers the bot's bubble (0.45) plus
+	// arrival (0.6) plus a small margin.
 	// Spiral search at `step` resolution out to `maxRadius`; gives up
 	// and returns the original point if nothing nearby is free.
-	nearestFree(x, z, pad = 0.4, step = 0.25, maxRadius = 4) {
+	nearestFree(x, z, pad = 1.2, step = 0.25, maxRadius = 6) {
 		if (!this.isBlocked(x, z, pad)) return { x, z };
 		// Spiral by rings of increasing radius. At each ring sample N
 		// directions; first free one wins.
