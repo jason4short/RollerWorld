@@ -31,7 +31,7 @@ const DIRS = [   // 8-connected neighbors with diagonal cost √2
 
 export class Planner {
 	constructor() {
-		this.mode = 'lidar_astar';   // 'direct' | 'astar' | 'lidar_astar'
+		this.mode = 'reactive';   // 'direct' | 'astar' | 'lidar_astar' | 'reactive'
 		this.goal = null;       // last commanded goal {x, z}
 		this.path = [];         // current planned path as {x, z}[]
 	}
