@@ -338,6 +338,17 @@ export class WorldRenderer3D {
 
 			tree.position.set(x, y, z);
 			this.treeGroup.add(tree);
+
+			// Register a collision footprint for A* and lidar — push
+			// directly into obstacles.items so we get the collision
+			// query without addWall's visible mesh duplicating the tree.
+			// Square ~30% bigger than the trunk to give the planner
+			// clearance for the lower foliage.
+			this.obstacles.items.push({
+				type: 'wall', position: [x, z],
+				length: 0.6, thickness: 0.6, yaw: 0,
+			});
+
 			placed++;
 		}
 	}
@@ -490,19 +501,25 @@ export class WorldRenderer3D {
 			if (tooClose) continue;
 
 			// Pair of overlapping boxes for a chunky non-cube silhouette.
+			const bx = 0.8 + rand() * 1.4;     // length (x extent before rotation)
+			const bz = 0.7 + rand() * 1.2;     // thickness (z extent before rotation)
+			const yaw = rand() * Math.PI * 2;
 			const big = new THREE.Mesh(
-				new THREE.BoxGeometry(
-					0.8 + rand() * 1.4,
-					0.5 + rand() * 0.9,
-					0.7 + rand() * 1.2,
-				),
+				new THREE.BoxGeometry(bx, 0.5 + rand() * 0.9, bz),
 				rand() < 0.5 ? boulderMat : boulderShade,
 			);
 			big.castShadow = true;
 			big.receiveShadow = true;
-			big.rotation.y = rand() * Math.PI * 2;
+			big.rotation.y = yaw;
 			big.position.set(x, y + 0.25, z);
 			this.propGroup.add(big);
+
+			// Register the boulder as an obstacle for A* and lidar.
+			this.obstacles.items.push({
+				type: 'wall', position: [x, z],
+				length: bx, thickness: bz, yaw,
+			});
+
 			placed++;
 		}
 
