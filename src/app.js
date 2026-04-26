@@ -107,30 +107,33 @@ export class App {
 			wheels: new Plotter(document.getElementById('plotWheels'),   3),
 		};
 
+
 		// --- Loop bookkeeping ------------------------------------------
-		this.running       = false;   // sim ticking? toggled by the Start/Pause button
-		this.tSim          = 0;       // sim-time elapsed since last reset (s) — log timestamps use this
-		this.history       = [];      // ring of recent state samples for the plotter
-		this.accumulator   = 0;       // wall-clock seconds banked, waiting to be consumed by physics steps
-		this.lastTimeStamp = 0;       // previous frame's rAF timestamp (ms) — used to compute frame dt
+		this.running       		= false;   // sim ticking? toggled by the Start/Pause button
+		this.simElapsedTime     = 0;       // sim-time elapsed since last reset (s) — log timestamps use this
+		this.history       		= [];      // ring of recent state samples for the plotter
+		this.accumulator   		= 0;       // wall-clock seconds banked, waiting to be consumed by physics steps
+		this.lastTimeStamp 		= 0;       // previous frame's rAF timestamp (ms) — used to compute frame dt
+
 
 		// Per-loop "time until next firing" counters (s). Each subloop
 		// decrements its dueX every physics step; when dueX <= 0, the loop
 		// fires and dueX is bumped by its period. Time-based scheduling
 		// (vs ArduPilot-style modulo counter) so rates can be any Hz, not
 		// just integer divisors of the base rate.
-		this.dueSensor = 0;   // sensor sampling (sensorHz)
-		this.dueOuter  = 0;   // outer attitude / mixer loop (outerHz, legacy controllers)
-		this.dueInner  = 0;   // inner motor / wheels loop (innerHz)
+		this.dueSensor 			= 0;   // sensor sampling (sensorHz)
+		this.dueOuter  			= 0;   // outer attitude / mixer loop (outerHz, legacy controllers)
+		this.dueInner  			= 0;   // inner motor / wheels loop (innerHz)
+
 
 		// --- Keyboard pilot state --------------------------------------
 		// Pilot directly sets a tilt target — hold ↑/↓ to lean, bot
 		// accelerates while leaned. Release → tilt = 0, bot returns
 		// upright and coasts to a stop via friction. Simple and stable.
-		this.pilotTilt        = 0;                       // current pilot-commanded tilt (rad)
-		this.pilotTiltMax     = 10 * (Math.PI / 180);    // hold-key tilt limit (rad) — 10°
-		this.pilotYawRate     = 0;                       // current pilot-commanded yaw rate (rad/s)
-		this.pilotYawRateMax  = 6.0;                     // arrow-key yaw rate limit (rad/s) — ~340°/s, matches real bot
+		this.pilotTilt       	= 0;                       // current pilot-commanded tilt (rad)
+		this.pilotTiltMax    	= 10 * (Math.PI / 180);    // hold-key tilt limit (rad) — 10°
+		this.pilotYawRate    	= 0;                       // current pilot-commanded yaw rate (rad/s)
+		this.pilotYawRateMax 	= 6.0;                     // arrow-key yaw rate limit (rad/s) — ~340°/s, matches real bot
 
 		// Cascade tilt-mode integrates pilotYawRate into a heading reference
 		// so arrow-key turns produce a real heading_target the Attitude
@@ -169,7 +172,7 @@ export class App {
 		if (Math.hypot(dx, dz) > arrival) return;
 
 		this.waypoints.shift();
-		this.ui.log(this.tSim, `WP reached  · queue=${this.waypoints.length}`);
+		this.ui.log(this.simElapsedTime, `WP reached  · queue=${this.waypoints.length}`);
 		const next = this.waypoints[0];
 		if (next) {
 			this.nav.target_x = next.x;
@@ -180,7 +183,7 @@ export class App {
 		} else {
 			document.getElementById('pilotMode').value = 'fbw';
 			document.getElementById('navEnabled').checked = false;
-			this.ui.log(this.tSim, 'route done → FBW');
+			this.ui.log(this.simElapsedTime, 'route done → FBW');
 		}
 	}
 
@@ -216,7 +219,7 @@ export class App {
 		this.dueSensor		= 0;
 		this.dueOuter		= 0;
 		this.dueInner		= 0;
-		this.tSim 			= 0;
+		this.simElapsedTime 			= 0;
 		this.history.length = 0;
 		this.renderer.clearTrail?.();
 		this.render();
@@ -261,7 +264,7 @@ export class App {
 			const now = performance.now();
 			if (!this._lastSafetyLogT || now - this._lastSafetyLogT > 500) {
 				this._lastSafetyLogT = now;
-				this.ui.log(this.tSim,
+				this.ui.log(this.simElapsedTime,
 					`safety: scale=${this.stack.safety.lastScale.toFixed(2)} ` +
 					`minDist=${this.stack.safety.lastMinDist.toFixed(2)}m`);
 			}
@@ -444,7 +447,7 @@ export class App {
 					const head = path[0] ?? { x: NaN, z: NaN };
 					const next = path[1] ?? { x: NaN, z: NaN };
 					const reason = pathBlocked ? 'blocked' : stale ? 'stale' : 'first';
-					this.ui.log(this.tSim,
+					this.ui.log(this.simElapsedTime,
 						`replan (${reason}): n=${path.length} ` +
 						`head=(${head.x.toFixed(2)},${head.z.toFixed(2)}) ` +
 						`next=(${next.x.toFixed(2)},${next.z.toFixed(2)})`);
@@ -583,7 +586,7 @@ export class App {
 				// --- Sensor sample (runs at sensorHz) ---
 				this.dueSensor -= this.DT;
 				if (this.dueSensor <= 0 || this.measured === null) {
-					this.measured = this.sensors.sample(this.plant.state, params, sensorCfg, this.tSim);
+					this.measured = this.sensors.sample(this.plant.state, params, sensorCfg, this.simElapsedTime);
 					// Inject IMU bias if the disturbance panel turned it on. The
 					// controller sees a tilted "upright" — its auto-trim should
 					// eventually absorb a real fixed bias; a step bias exposes
@@ -719,7 +722,7 @@ export class App {
 
 				// Physics advances every DT with the last computed force held.
 				this.plant.step(this.lastForce, this.lastTauYaw, this.DT);
-				this.tSim += this.DT;
+				this.simElapsedTime += this.DT;
 				// CoM computation for plotting (true state, not sensor-filtered).
 				const cs = Math.cos(this.plant.state.pitch);
 				const sn = Math.sin(this.plant.state.pitch);
@@ -738,7 +741,7 @@ export class App {
 					: (this.controllers[this.controllerType]?.lastPWM ?? 0);
 
 				this.history.push({
-					t:				this.tSim,
+					t:				this.simElapsedTime,
 					pitch:			this.plant.state.pitch,
 					pitch_rate:		this.plant.state.pitch_rate,
 					x:				this.plant.state.x,
@@ -768,7 +771,7 @@ export class App {
 
 				if (Math.abs(this.plant.state.pitch) > Math.PI / 2) {
 					this.running = false;
-					this.ui.log(this.tSim, `fell at t=${this.tSim.toFixed(2)}s`);
+					this.ui.log(this.simElapsedTime, `fell at t=${this.simElapsedTime.toFixed(2)}s`);
 					document.getElementById('btnRun').textContent = 'Start';
 					break;
 				}
@@ -867,13 +870,13 @@ export class App {
 		btnRoadAlgo.onclick = () => {
 			this.road.setAlgorithm(this.road.algorithm === 'ftg' ? 'wsum' : 'ftg');
 			refreshAlgoLabel();
-			this.ui.log(this.tSim, `road algo: ${this.road.algorithm}`);
+			this.ui.log(this.simElapsedTime, `road algo: ${this.road.algorithm}`);
 		};
 
 		document.getElementById('btnPush').onclick = () => {
 			const shove_rate = this.ui.num('shoveOmega');
 			this.plant.state.pitch_rate += shove_rate;
-			this.ui.log(this.tSim, `shove: +${shove_rate.toFixed(1)} rad/s tip`);
+			this.ui.log(this.simElapsedTime, `shove: +${shove_rate.toFixed(1)} rad/s tip`);
 		};
 
 		// Camera-follow toggle. ON (default): camera auto-recenters behind
@@ -884,7 +887,7 @@ export class App {
 			const enabled = !btnCamFollow.classList.contains('active');
 			btnCamFollow.classList.toggle('active', enabled);
 			this.renderer.setAutoFollow(enabled);
-			this.ui.log(this.tSim, `camera follow: ${enabled ? 'on' : 'off'}`);
+			this.ui.log(this.simElapsedTime, `camera follow: ${enabled ? 'on' : 'off'}`);
 		};
 
 		const btnLidar = document.getElementById('btnLidar');
@@ -892,7 +895,7 @@ export class App {
 		btnLidar.onclick = () => {
 			this.showLidarRays = !btnLidar.classList.contains('active');
 			btnLidar.classList.toggle('active', this.showLidarRays);
-			this.ui.log(this.tSim, `lidar rays: ${this.showLidarRays ? 'shown' : 'hidden'}`);
+			this.ui.log(this.simElapsedTime, `lidar rays: ${this.showLidarRays ? 'shown' : 'hidden'}`);
 		};
 
 		const btnMapGrid = document.getElementById('btnMapGrid');
@@ -900,7 +903,7 @@ export class App {
 		btnMapGrid.onclick = () => {
 			this.showMapGrid = !btnMapGrid.classList.contains('active');
 			btnMapGrid.classList.toggle('active', this.showMapGrid);
-			this.ui.log(this.tSim, `map grid: ${this.showMapGrid ? 'shown' : 'hidden'}`);
+			this.ui.log(this.simElapsedTime, `map grid: ${this.showMapGrid ? 'shown' : 'hidden'}`);
 		};
 
 		// Disturbances — instantaneous state kicks, plus a toggleable IMU bias.
@@ -909,12 +912,12 @@ export class App {
 			const J = sign * this.ui.num('disturbForceImpulse');
 			const m_total = this.plant.params.M + this.plant.params.m;
 			this.plant.state.vel_cart += J / m_total;
-			this.ui.log(this.tSim, `chassis push: ${J.toFixed(1)} N·s → Δv=${(J / m_total).toFixed(2)} m/s`);
+			this.ui.log(this.simElapsedTime, `chassis push: ${J.toFixed(1)} N·s → Δv=${(J / m_total).toFixed(2)} m/s`);
 		};
 		const yawKick = sign => {
 			const J = sign * this.ui.num('disturbTauImpulse');
 			this.plant.state.yaw_rate += J / this.plant.params.I_yaw;
-			this.ui.log(this.tSim, `yaw kick: ${J.toFixed(2)} N·m·s`);
+			this.ui.log(this.simElapsedTime, `yaw kick: ${J.toFixed(2)} N·m·s`);
 		};
 		document.getElementById('btnDisturbForward').onclick = () => pushChassis(+1);
 		document.getElementById('btnDisturbBack').onclick    = () => pushChassis(-1);
@@ -926,11 +929,11 @@ export class App {
 			if (this.imuBiasInjected !== 0) {
 				this.imuBiasInjected = 0;
 				biasBtn.textContent = 'Bias OFF';
-				this.ui.log(this.tSim, 'IMU bias cleared');
+				this.ui.log(this.simElapsedTime, 'IMU bias cleared');
 			} else {
 				this.imuBiasInjected = this.ui.num('disturbImuBias');
 				biasBtn.textContent = `Bias ON (+${(this.imuBiasInjected * 180 / Math.PI).toFixed(1)}°)`;
-				this.ui.log(this.tSim, `IMU bias on: +${(this.imuBiasInjected * 180 / Math.PI).toFixed(1)}°`);
+				this.ui.log(this.simElapsedTime, `IMU bias on: +${(this.imuBiasInjected * 180 / Math.PI).toFixed(1)}°`);
 			}
 		};
 
@@ -953,23 +956,23 @@ export class App {
 			if (this.recorder.recording) {
 				this.recorder.stop();
 				recBtn.textContent = 'Record';
-				this.ui.log(this.tSim, `recording stopped: ${this.recorder.size()} samples`);
+				this.ui.log(this.simElapsedTime, `recording stopped: ${this.recorder.size()} samples`);
 			} else {
 				this.recorder.start();
 				recBtn.textContent = 'Stop';
-				this.ui.log(this.tSim, 'recording started');
+				this.ui.log(this.simElapsedTime, 'recording started');
 			}
 			refreshRecStats();
 		};
 		document.getElementById('btnClearRec').onclick = () => {
 			this.recorder.clear();
-			this.ui.log(this.tSim, 'recording cleared');
+			this.ui.log(this.simElapsedTime, 'recording cleared');
 			refreshRecStats();
 		};
 		document.getElementById('btnSaveRec').onclick = () => {
-			if (this.recorder.size() === 0) return this.ui.log(this.tSim, 'no samples to save');
+			if (this.recorder.size() === 0) return this.ui.log(this.simElapsedTime, 'no samples to save');
 			this.recorder.download();
-			this.ui.log(this.tSim, `saved ${this.recorder.size()} samples`);
+			this.ui.log(this.simElapsedTime, `saved ${this.recorder.size()} samples`);
 		};
 		// Update the stats line periodically while recording.
 		setInterval(refreshRecStats, 250);
@@ -982,7 +985,7 @@ export class App {
 			if (mode === 'nn') {
 				const mlp = this.attitudePitchMlp ?? null;
 				if (!mlp) {
-					this.ui.log(this.tSim, 'no trained pitch NN yet — staying on rule');
+					this.ui.log(this.simElapsedTime, 'no trained pitch NN yet — staying on rule');
 					e.target.value = 'rule';
 					return;
 				}
@@ -990,7 +993,7 @@ export class App {
 			} else if (mode === 'rnn') {
 				const rnn = this.attitudePitchRnn ?? null;
 				if (!rnn) {
-					this.ui.log(this.tSim, 'no trained pitch RNN yet — staying on rule');
+					this.ui.log(this.simElapsedTime, 'no trained pitch RNN yet — staying on rule');
 					e.target.value = 'rule';
 					return;
 				}
@@ -998,7 +1001,7 @@ export class App {
 			} else {
 				this.stack.attitude.setPitchMode('rule');
 			}
-			this.ui.log(this.tSim, `pitch: ${mode}`);
+			this.ui.log(this.simElapsedTime, `pitch: ${mode}`);
 		};
 
 		document.getElementById('btnTrainMixerNN').onclick = () => this.trainMixerNN();
@@ -1006,12 +1009,12 @@ export class App {
 			const mode = e.target.value;
 			const mlp = this.mixerMlp ?? null;
 			if (mode === 'nn' && !mlp) {
-				this.ui.log(this.tSim, 'no trained mixer NN yet — staying on rule');
+				this.ui.log(this.simElapsedTime, 'no trained mixer NN yet — staying on rule');
 				e.target.value = 'rule';
 				return;
 			}
 			this.stack.mixer.setMode(mode, mlp);
-			this.ui.log(this.tSim, `mixer: ${mode}`);
+			this.ui.log(this.simElapsedTime, `mixer: ${mode}`);
 		};
 
 		document.getElementById('btnTrainYawNN').onclick = () => this.trainAttitudeYawNN();
@@ -1019,12 +1022,12 @@ export class App {
 			const mode = e.target.value;
 			const mlp = this.attitudeYawMlp ?? null;
 			if (mode === 'nn' && !mlp) {
-				this.ui.log(this.tSim, 'no trained yaw NN yet — staying on rule');
+				this.ui.log(this.simElapsedTime, 'no trained yaw NN yet — staying on rule');
 				e.target.value = 'rule';
 				return;
 			}
 			this.stack.attitude.setYawMode(mode, mlp);
-			this.ui.log(this.tSim, `yaw: ${mode}`);
+			this.ui.log(this.simElapsedTime, `yaw: ${mode}`);
 		};
 
 		document.getElementById('btnTrainWheelsNN').onclick = () => this.trainWheelsNN();
@@ -1032,12 +1035,12 @@ export class App {
 			const mode = e.target.value;
 			const mlp = this.wheelsMlp ?? null;
 			if (mode === 'nn' && !mlp) {
-				this.ui.log(this.tSim, 'no trained wheels NN yet — staying on rule');
+				this.ui.log(this.simElapsedTime, 'no trained wheels NN yet — staying on rule');
 				e.target.value = 'rule';
 				return;
 			}
 			this.stack.wheels.setMode(mode, mlp);
-			this.ui.log(this.tSim, `wheels: ${mode}`);
+			this.ui.log(this.simElapsedTime, `wheels: ${mode}`);
 		};
 
 		document.getElementById('btnTrainNavNN').onclick = () => this.trainNavNN();
@@ -1052,35 +1055,35 @@ export class App {
 		this.planner.setMode(plannerSel.value);
 		plannerSel.onchange = e => {
 			this.planner.setMode(e.target.value);
-			this.ui.log(this.tSim, `planner: ${e.target.value}`);
+			this.ui.log(this.simElapsedTime, `planner: ${e.target.value}`);
 		};
 		document.getElementById('btnForgetMap').onclick = () => {
 			this.occupancyGrid.clear();
-			this.ui.log(this.tSim, 'occupancy map cleared');
+			this.ui.log(this.simElapsedTime, 'occupancy map cleared');
 		};
 		document.getElementById('nav_mode_nn').onchange = e => {
 			const mode = e.target.value;
 			const mlp = this.navMlp ?? null;
 			if (mode === 'nn' && !mlp) {
-				this.ui.log(this.tSim, 'no trained nav NN yet — staying on rule');
+				this.ui.log(this.simElapsedTime, 'no trained nav NN yet — staying on rule');
 				e.target.value = 'rule';
 				return;
 			}
 			this.stack.nav.setAutoMode(mode, mlp);
-			this.ui.log(this.tSim, `nav (auto): ${mode}`);
+			this.ui.log(this.simElapsedTime, `nav (auto): ${mode}`);
 		};
 
 		document.getElementById('btnCalibrate').onclick = () => this.calibrateMotor();
 		document.getElementById('btnClearLUT').onclick = () => {
 			this.controllers.ardubalance.pwmTable.clear();
-			this.ui.log(this.tSim, 'PWM LUT cleared → linear fallback');
+			this.ui.log(this.simElapsedTime, 'PWM LUT cleared → linear fallback');
 			this.drawLUT();
 		};
 
 		document.getElementById('ctrlType').onchange = e => {
 			this.controllerType = e.target.value;
 			this.syncControllerPanels();
-			this.ui.log(this.tSim, `controller: ${this.controllerType}`);
+			this.ui.log(this.simElapsedTime, `controller: ${this.controllerType}`);
 			this.reset();
 		};
 
@@ -1121,7 +1124,7 @@ export class App {
 			// goal is buried inside.
 			const snapped = this.renderer.obstacles.nearestFree(hit.x, hit.z, 1.2);
 			if (snapped.x !== hit.x || snapped.z !== hit.z) {
-				this.ui.log(this.tSim,
+				this.ui.log(this.simElapsedTime,
 					`flag snapped to nearest free spot (Δ=${
 						Math.hypot(snapped.x - hit.x, snapped.z - hit.z).toFixed(2)} m)`);
 				hit = snapped;
@@ -1161,7 +1164,7 @@ export class App {
 			if (navTzInput) navTzInput.value = head.z.toFixed(2);
 			document.getElementById('navEnabled').checked = true;
 			document.getElementById('pilotMode').value = 'auto';
-			this.ui.log(this.tSim,
+			this.ui.log(this.simElapsedTime,
 				`WP via ${this.planner.mode}: (${hit.x.toFixed(2)}, ${hit.z.toFixed(2)})  · path=${path.length}, queue=${this.waypoints.length}`);
 		});
 
@@ -1169,7 +1172,7 @@ export class App {
 			btn.onclick = () => {
 				const p = PRESETS[btn.dataset.preset];
 				this.ui.writeAll(p);
-				this.ui.log(this.tSim, `preset: ${btn.dataset.preset}`);
+				this.ui.log(this.simElapsedTime, `preset: ${btn.dataset.preset}`);
 				this.running = false;
 				document.getElementById('btnRun').textContent = 'Start';
 				this.reset();
@@ -1248,10 +1251,10 @@ export class App {
 		this.controllers.ardubalance.pwmTable.setFromCalibration(
 			results.map(r => ({ pwm: r.pwm, speed: r.speed })),
 		);
-		this.ui.log(this.tSim,
+		this.ui.log(this.simElapsedTime,
 			`calibrated: ${results.length} points, top=${results.at(-1).speed.toFixed(2)} m/s @ PWM ${PWM_max}`);
 		for (const r of results) {
-			this.ui.log(this.tSim, `	PWM=${r.pwm.toString().padStart(4)} → ${r.speed.toFixed(3)} m/s`);
+			this.ui.log(this.simElapsedTime, `	PWM=${r.pwm.toString().padStart(4)} → ${r.speed.toFixed(3)} m/s`);
 		}
 		this.drawLUT();
 	}
@@ -1313,7 +1316,7 @@ export class App {
 
 		const arduCount = this.recorder.count('ardubalance');
 		if (mode === 'recorded' && arduCount < 50) {
-			this.ui.log(this.tSim, `need more recorded ArduBalance samples (have ${arduCount}, want ≥50)`);
+			this.ui.log(this.simElapsedTime, `need more recorded ArduBalance samples (have ${arduCount}, want ≥50)`);
 			return;
 		}
 
@@ -1325,7 +1328,7 @@ export class App {
 			? `${samples} random samples/epoch`
 			: `${this.recorder.data.length} recorded samples`;
 		nnStats.textContent = `training: 0/${epochs}, ${srcDesc}, ${mlp.paramCount()} params`;
-		this.ui.log(this.tSim, `training NN (${mode}, ${hidden} hidden, ${mlp.paramCount()} params)`);
+		this.ui.log(this.simElapsedTime, `training NN (${mode}, ${hidden} hidden, ${mlp.paramCount()} params)`);
 
 		const lossHistory = [];
 		const t0 = performance.now();
@@ -1352,7 +1355,7 @@ export class App {
 		this.controllers.nn.mlp = mlp;
 		const finalLoss = lossHistory.at(-1);
 		nnStats.textContent = `done: loss=${finalLoss.toExponential(3)}	(${dt.toFixed(1)}s)`;
-		this.ui.log(this.tSim, `NN trained: final loss=${finalLoss.toExponential(3)} in ${dt.toFixed(1)}s`);
+		this.ui.log(this.simElapsedTime, `NN trained: final loss=${finalLoss.toExponential(3)} in ${dt.toFixed(1)}s`);
 	}
 
 	// Train a small MLP to imitate the rule-based mixer (vel → tilt). Two
@@ -1368,7 +1371,7 @@ export class App {
 		const mode = document.getElementById('nnMode').value;
 		const recordedCount = this.recorder.count('cascade_mixer');
 		if (mode === 'recorded' && recordedCount < 50) {
-			this.ui.log(this.tSim, `need more recorded cascade_mixer samples (have ${recordedCount}, want ≥50)`);
+			this.ui.log(this.simElapsedTime, `need more recorded cascade_mixer samples (have ${recordedCount}, want ≥50)`);
 			return;
 		}
 
@@ -1376,7 +1379,7 @@ export class App {
 		const mixerGains = this.ui.readCascadeGains().mixer;
 		const srcDesc = mode === 'random' ? `${samples} random/epoch` : `${recordedCount} recorded`;
 		stats.textContent = `training (${mode}): 0/${epochs}, ${srcDesc}, ${mlp.paramCount()} params`;
-		this.ui.log(this.tSim, `training mixer NN (${mode}, ${hidden} hidden, ${mlp.paramCount()} params)`);
+		this.ui.log(this.simElapsedTime, `training mixer NN (${mode}, ${hidden} hidden, ${mlp.paramCount()} params)`);
 
 		const lossHistory = [];
 		const t0 = performance.now();
@@ -1397,7 +1400,7 @@ export class App {
 		document.getElementById('mixer_mode').value = 'nn';
 		const finalLoss = lossHistory.at(-1);
 		stats.textContent = `done: loss=${finalLoss.toExponential(3)}	(${dt.toFixed(1)}s) — using NN`;
-		this.ui.log(this.tSim, `mixer NN trained: final loss=${finalLoss.toExponential(3)} in ${dt.toFixed(1)}s, switched to NN`);
+		this.ui.log(this.simElapsedTime, `mixer NN trained: final loss=${finalLoss.toExponential(3)} in ${dt.toFixed(1)}s, switched to NN`);
 	}
 
 	async trainNavNN() {
@@ -1410,7 +1413,7 @@ export class App {
 		const mode = document.getElementById('nnMode').value;
 		const recordedCount = this.recorder.count('cascade_nav');
 		if (mode === 'recorded' && recordedCount < 50) {
-			this.ui.log(this.tSim, `need more recorded cascade_nav samples (have ${recordedCount}, want ≥50)`);
+			this.ui.log(this.simElapsedTime, `need more recorded cascade_nav samples (have ${recordedCount}, want ≥50)`);
 			return;
 		}
 
@@ -1418,7 +1421,7 @@ export class App {
 		const navGains = this.ui.readCascadeGains().nav;
 		const srcDesc = mode === 'random' ? `${samples} random/epoch` : `${recordedCount} recorded`;
 		stats.textContent = `training (${mode}): 0/${epochs}, ${srcDesc}, ${mlp.paramCount()} params`;
-		this.ui.log(this.tSim, `training nav NN (${mode}, ${hidden} hidden, ${mlp.paramCount()} params)`);
+		this.ui.log(this.simElapsedTime, `training nav NN (${mode}, ${hidden} hidden, ${mlp.paramCount()} params)`);
 
 		const lossHistory = [];
 		const t0 = performance.now();
@@ -1439,7 +1442,7 @@ export class App {
 		document.getElementById('nav_mode_nn').value = 'nn';
 		const finalLoss = lossHistory.at(-1);
 		stats.textContent = `done: loss=${finalLoss.toExponential(3)}	(${dt.toFixed(1)}s) — using NN`;
-		this.ui.log(this.tSim, `nav NN trained: final loss=${finalLoss.toExponential(3)} in ${dt.toFixed(1)}s, switched to NN`);
+		this.ui.log(this.simElapsedTime, `nav NN trained: final loss=${finalLoss.toExponential(3)} in ${dt.toFixed(1)}s, switched to NN`);
 	}
 
 	async trainWheelsNN() {
@@ -1452,7 +1455,7 @@ export class App {
 		const mode = document.getElementById('nnMode').value;
 		const recordedCount = this.recorder.count('cascade_wheels');
 		if (mode === 'recorded' && recordedCount < 50) {
-			this.ui.log(this.tSim, `need more recorded cascade_wheels samples (have ${recordedCount}, want ≥50)`);
+			this.ui.log(this.simElapsedTime, `need more recorded cascade_wheels samples (have ${recordedCount}, want ≥50)`);
 			return;
 		}
 
@@ -1460,7 +1463,7 @@ export class App {
 		const wheelGains = this.ui.readCascadeGains().wheels;
 		const srcDesc = mode === 'random' ? `${samples} random/epoch` : `${recordedCount} recorded`;
 		stats.textContent = `training (${mode}): 0/${epochs}, ${srcDesc}, ${mlp.paramCount()} params`;
-		this.ui.log(this.tSim, `training wheels NN (${mode}, ${hidden} hidden, ${mlp.paramCount()} params)`);
+		this.ui.log(this.simElapsedTime, `training wheels NN (${mode}, ${hidden} hidden, ${mlp.paramCount()} params)`);
 
 		const lossHistory = [];
 		const t0 = performance.now();
@@ -1481,7 +1484,7 @@ export class App {
 		document.getElementById('wheels_mode').value = 'nn';
 		const finalLoss = lossHistory.at(-1);
 		stats.textContent = `done: loss=${finalLoss.toExponential(3)}	(${dt.toFixed(1)}s) — using NN (FF only)`;
-		this.ui.log(this.tSim, `wheels NN trained: final loss=${finalLoss.toExponential(3)} in ${dt.toFixed(1)}s, switched to NN`);
+		this.ui.log(this.simElapsedTime, `wheels NN trained: final loss=${finalLoss.toExponential(3)} in ${dt.toFixed(1)}s, switched to NN`);
 	}
 
 	async trainAttitudeYawNN() {
@@ -1494,7 +1497,7 @@ export class App {
 		const mode = document.getElementById('nnMode').value;
 		const recordedCount = this.recorder.count('cascade_yaw');
 		if (mode === 'recorded' && recordedCount < 50) {
-			this.ui.log(this.tSim, `need more recorded cascade_yaw samples (have ${recordedCount}, want ≥50)`);
+			this.ui.log(this.simElapsedTime, `need more recorded cascade_yaw samples (have ${recordedCount}, want ≥50)`);
 			return;
 		}
 
@@ -1502,7 +1505,7 @@ export class App {
 		const attGains = this.ui.readCascadeGains().attitude;
 		const srcDesc = mode === 'random' ? `${samples} random/epoch` : `${recordedCount} recorded`;
 		stats.textContent = `training (${mode}): 0/${epochs}, ${srcDesc}, ${mlp.paramCount()} params`;
-		this.ui.log(this.tSim, `training yaw NN (${mode}, ${hidden} hidden, ${mlp.paramCount()} params)`);
+		this.ui.log(this.simElapsedTime, `training yaw NN (${mode}, ${hidden} hidden, ${mlp.paramCount()} params)`);
 
 		const lossHistory = [];
 		const t0 = performance.now();
@@ -1523,7 +1526,7 @@ export class App {
 		document.getElementById('yaw_mode').value = 'nn';
 		const finalLoss = lossHistory.at(-1);
 		stats.textContent = `done: loss=${finalLoss.toExponential(3)}	(${dt.toFixed(1)}s) — using NN`;
-		this.ui.log(this.tSim, `yaw NN trained: final loss=${finalLoss.toExponential(3)} in ${dt.toFixed(1)}s, switched to NN`);
+		this.ui.log(this.simElapsedTime, `yaw NN trained: final loss=${finalLoss.toExponential(3)} in ${dt.toFixed(1)}s, switched to NN`);
 	}
 
 	// Train a small MLP to imitate the rule-based pitch of Attitude.
@@ -1541,7 +1544,7 @@ export class App {
 		const mode = document.getElementById('nnMode').value;
 		const recordedCount = this.recorder.count('cascade_pitch');
 		if (mode === 'recorded' && recordedCount < 50) {
-			this.ui.log(this.tSim, `need more recorded cascade_pitch samples (have ${recordedCount}, want ≥50)`);
+			this.ui.log(this.simElapsedTime, `need more recorded cascade_pitch samples (have ${recordedCount}, want ≥50)`);
 			return;
 		}
 
@@ -1549,7 +1552,7 @@ export class App {
 		const attGains = this.ui.readCascadeGains().attitude;
 		const srcDesc = mode === 'random' ? `${samples} random/epoch` : `${recordedCount} recorded`;
 		stats.textContent = `training (${mode}): 0/${epochs}, ${srcDesc}, ${mlp.paramCount()} params`;
-		this.ui.log(this.tSim, `training pitch NN (${mode}, ${hidden} hidden, ${mlp.paramCount()} params)`);
+		this.ui.log(this.simElapsedTime, `training pitch NN (${mode}, ${hidden} hidden, ${mlp.paramCount()} params)`);
 
 		const lossHistory = [];
 		const t0 = performance.now();
@@ -1570,7 +1573,7 @@ export class App {
 		document.getElementById('pitch_mode').value = 'nn';
 		const finalLoss = lossHistory.at(-1);
 		stats.textContent = `done: loss=${finalLoss.toExponential(3)}	(${dt.toFixed(1)}s) — using NN`;
-		this.ui.log(this.tSim, `pitch NN trained: final loss=${finalLoss.toExponential(3)} in ${dt.toFixed(1)}s, switched to NN`);
+		this.ui.log(this.simElapsedTime, `pitch NN trained: final loss=${finalLoss.toExponential(3)} in ${dt.toFixed(1)}s, switched to NN`);
 	}
 
 	async trainAttitudePitchRNN() {
@@ -1587,7 +1590,7 @@ export class App {
 		const rnn = new RNN(3, hidden, 1);
 		const attGains = this.ui.readCascadeGains().attitude;
 		stats.textContent = `training RNN: 0/${epochs}, ${rnn.paramCount()} params, hidden=${hidden}, seq=${seqLen}`;
-		this.ui.log(this.tSim, `training pitch RNN (${hidden} hidden, seq=${seqLen}, ${rnn.paramCount()} params)`);
+		this.ui.log(this.simElapsedTime, `training pitch RNN (${hidden} hidden, seq=${seqLen}, ${rnn.paramCount()} params)`);
 
 		const lossHistory = [];
 		const t0 = performance.now();
@@ -1607,7 +1610,7 @@ export class App {
 		document.getElementById('pitch_mode').value = 'rnn';
 		const finalLoss = lossHistory.at(-1);
 		stats.textContent = `done: loss=${finalLoss.toExponential(3)}	(${dt.toFixed(1)}s) — using RNN`;
-		this.ui.log(this.tSim, `pitch RNN trained: final loss=${finalLoss.toExponential(3)} in ${dt.toFixed(1)}s, switched to RNN`);
+		this.ui.log(this.simElapsedTime, `pitch RNN trained: final loss=${finalLoss.toExponential(3)} in ${dt.toFixed(1)}s, switched to RNN`);
 	}
 
 	drawLossPlot(losses) {
@@ -1647,7 +1650,7 @@ export class App {
 		const store = this._loadStore();
 		store[name] = this.ui.readAll();
 		this._saveStore(store);
-		this.ui.log(this.tSim, `saved tuning "${name}"`);
+		this.ui.log(this.simElapsedTime, `saved tuning "${name}"`);
 		this.renderSavedTunings();
 	}
 
@@ -1656,7 +1659,7 @@ export class App {
 		const t = store[name];
 		if (!t) return;
 		this.ui.writeAll(t);
-		this.ui.log(this.tSim, `loaded tuning "${name}"`);
+		this.ui.log(this.simElapsedTime, `loaded tuning "${name}"`);
 		this.running = false;
 		document.getElementById('btnRun').textContent = 'Start';
 		this.reset();
@@ -1706,7 +1709,7 @@ export class App {
 		a.download = `roller-tuning-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.json`;
 		a.click();
 		URL.revokeObjectURL(url);
-		this.ui.log(this.tSim, 'exported tuning');
+		this.ui.log(this.simElapsedTime, 'exported tuning');
 	}
 
 	async importTuning(file) {
@@ -1714,12 +1717,12 @@ export class App {
 			const text = await file.text();
 			const tuning = JSON.parse(text);
 			this.ui.writeAll(tuning);
-			this.ui.log(this.tSim, `imported "${file.name}"`);
+			this.ui.log(this.simElapsedTime, `imported "${file.name}"`);
 			this.running = false;
 			document.getElementById('btnRun').textContent = 'Start';
 			this.reset();
 		} catch (err) {
-			this.ui.log(this.tSim, `import failed: ${err.message}`);
+			this.ui.log(this.simElapsedTime, `import failed: ${err.message}`);
 		}
 	}
 

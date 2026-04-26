@@ -44,11 +44,11 @@ const DEFAULT_RATES = { nav: 60, mixer: 100, attitude: 100, wheels: 400 };
 
 export class ControllerStack {
 	constructor(rates = DEFAULT_RATES) {
-		this.nav      = new Nav();
-		this.mixer    = new NavMixer();
-		this.attitude = new Attitude();
-		this.wheels   = new Wheels();
-		this.safety   = new Safety();
+		this.nav     	 = new Nav();
+		this.mixer   	 = new NavMixer();
+		this.attitude	 = new Attitude();
+		this.wheels  	 = new Wheels();
+		this.safety  	 = new Safety();
 		this.setRates(rates);
 
 		// Last output of each layer (zero-order hold between firings).
@@ -63,6 +63,7 @@ export class ControllerStack {
 		this.tNav = 0; this.tMixer = 0; this.tAttitude = 0; this.tWheels = 0;
 	}
 
+	// todo = flip to integer multiples? 
 	setRates(rates) {
 		this.rates       = { ...DEFAULT_RATES, ...rates };
 		this.dtNav       = 1 / this.rates.nav;
@@ -81,10 +82,11 @@ export class ControllerStack {
 
 	// Caller ticks this at the wheels rate. Slower layers fire when their
 	// period has elapsed; everyone else sees the cached output above.
-	//
+	
 	// command: { mode: 'auto' | 'fbw' | 'tilt', stick?, pitch_target?, yaw_target? }
 	// gains:   { nav, mixer, attitude, wheels }  (one bag per layer)
-	update(sensors, command, gains, motor, dt) {
+	update(sensors, command, gains, motor, dt) 
+	{
 		this.tNav += dt; this.tMixer += dt; this.tAttitude += dt; this.tWheels += dt;
 
 		const tiltMode = command.mode === 'tilt';
@@ -95,6 +97,7 @@ export class ControllerStack {
 			this.navOut = this._runNav(sensors, command, gains.nav, this.tNav);
 			this.tNav = 0;
 		}
+
 		// Safety modulation runs at the wheels rate even between Nav firings
 		// so the bot reacts to a sudden close obstacle faster than Nav decides.
 		// In tilt mode, no velocity loop is active — skip.
