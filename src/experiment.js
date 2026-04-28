@@ -1,5 +1,5 @@
 import { Pendulum } from './physics/pendulum.js';
-import { PIDController } from './controllers/pid.js';
+import { PitchHoldController } from './controllers/pitch-hold.js';
 
 // Headless experiment runner — sweeps a parameter and reports survival + IAE.
 // Uses god-mode state (no sensors), so its tuning suggestions may be hotter
@@ -11,7 +11,7 @@ export class ExperimentRunner {
   runTrial(params, gains, { th0 = 6, duration = 10, noise = 0 } = {}) {
     const plant = new Pendulum(params);
     plant.setState({ x: 0, vel_cart: 0, pitch: th0 * Math.PI / 180, pitch_rate: 0 });
-    const pid = new PIDController();
+    const pid = new PitchHoldController();
     let t = 0, fell = false, iae = 0;
     while (t < duration) {
       const s = plant.state;

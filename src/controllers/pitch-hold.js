@@ -1,15 +1,20 @@
-// PID controller for the balance bot.
-// Swap this file out to experiment with different control laws.
+// PitchHold — single-loop PD-on-pitch (with optional integrator and
+// position terms). The simplest of the four controllers in the bot:
+// pitch error in, force out, no outer velocity loop, no actuator model.
+//
+// "PitchHold" names what it does, not what it's built from — every
+// controller in here uses PID-style math, so naming this one "PID"
+// would be misleading.
 //
 // Interface (uniform across controllers):
 //   c.reset()
-//   c.updateVelocity(sensors, gains, dt)   // no-op for single-rate PID
+//   c.updateVelocity(sensors, gains, dt)   // no-op for single-rate
 //   c.produceForce(sensors, gains, dt, motor)  → force (N) on cart
 //
-// sensors: { x, v, pitch, pitch_rate }   quantized/noisy measurements from Sensors
+// sensors: { x, v, pitch, pitch_rate }   quantized/noisy measurements
 // gains:   { Kp, Ki, Kd, Kx, Kv, Fmax }
 
-export class PIDController {
+export class PitchHoldController {
   constructor() {
     this.pitch_integral = 0;
   }

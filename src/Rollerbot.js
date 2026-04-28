@@ -18,7 +18,7 @@
 // fire. No pilot input here either — Pilot decides what command to
 // send. Rollerbot just steps the controllers when asked.
 
-import { PIDController }         from './controllers/pid.js';
+import { PitchHoldController }   from './controllers/pitch-hold.js';
 import { ArduBalanceController } from './controllers/ardubalance.js';
 import { NNController }          from './controllers/nn.js';
 import { YawController }         from './controllers/yaw.js';
@@ -30,7 +30,7 @@ export class Rollerbot {
 		this.recorder = recorder;    // pushed inline during updateInner
 
 		this.controllers = {
-			pid:         new PIDController(),
+			pid:         new PitchHoldController(),   // 'pid' key kept for HTML/preset compat
 			ardubalance: new ArduBalanceController(),
 			nn:          new NNController(),
 		};
@@ -120,7 +120,7 @@ export class Rollerbot {
 		const gains      = this.currentGains();
 		// PID biases its error by the tilt setpoint; ArduBalance reads
 		// target_angle which was set in applyCommand.
-		const measOuter = controller instanceof PIDController
+		const measOuter = controller instanceof PitchHoldController
 			? { ...measured, pitch: measured.pitch - this._command.tiltSetpoint }
 			: measured;
 		controller.updateVelocity(measOuter, gains, dt);
@@ -142,7 +142,7 @@ export class Rollerbot {
 			this._lastStackOut = out;
 			this._recordCascade(measured, command, out);
 		} else {
-			const measInner = controller instanceof PIDController
+			const measInner = controller instanceof PitchHoldController
 				? { ...measured, pitch: measured.pitch - command.tiltSetpoint }
 				: measured;
 			this.lastForce = controller.produceForce(measInner, gains, dt, motor);
