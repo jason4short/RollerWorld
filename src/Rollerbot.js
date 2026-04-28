@@ -92,24 +92,34 @@ export class Rollerbot {
 	// and forward it to the active controller. Called once per RAF.
 	//
 	// command: {
-	//   tiltSetpoint, yawRateSetpoint,         — for legacy attitude paths
-	//   cascadeCommand: { mode, stick?, pitch_target?, ... },
-	//   navTarget:      { x, z },              — cascade nav mirror & recording
-	//   navVelDesired,                          — for NN's vel_cart_target
+	//   intent: 'cruise' | 'attitude',
+	//   speed, heading,           — when cruise
+	//   tilt, yawRate,            — when attitude
+	//   navTarget: { x, z },      — cascade auto path & recording
+	//   navVelDesired,            — for NN training shadow
 	// }
 	applyCommand(command) {
 		this._command = command;
 		const controller = this.currentController();
 
+		// Mirror nav target onto cascade's internal Nav (kept for the
+		// existing NN training path that imitates updateAuto).
 		if (this.isCascade()) {
 			this.stack.nav.target_x = command.navTarget.x;
 			this.stack.nav.target_z = command.navTarget.z;
-			this.stack.setCascadeCommand(command.cascadeCommand);
-		} else {
-			controller.setAttitude(command.tiltSetpoint, command.yawRateSetpoint);
-			if (controller instanceof NNController) {
-				controller.vel_cart_target = command.navVelDesired;
+		}
+
+		if (command.intent === 'cruise') {
+			if (typeof controller.setCruise === 'function') {
+				controller.setCruise(command.speed, command.heading);
+			} else {
+				// Attitude-only controller (PitchHold) can't be driven by
+				// nav. Quietly hold attitude at zero so the bot doesn't
+				// fall over; UI surfaces the mismatch.
+				controller.setAttitude(0, 0);
 			}
+		} else {
+			controller.setAttitude(command.tilt, command.yawRate);
 		}
 	}
 
@@ -199,7 +209,7 @@ export class Rollerbot {
 				yaw_rate:    measured.yaw_rate,
 				torque_yaw:  stack.attitude.lastTorqueYaw,
 			});
-			if (command.cascadeCommand?.mode === 'auto') {
+			if (command.intent === 'cruise') {
 				const dx = command.navTarget.x - measured.x;
 				const dz = command.navTarget.z - (measured.z ?? 0);
 				this.recorder.recordCascadeNav({

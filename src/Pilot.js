@@ -137,121 +137,96 @@ export class Pilot {
 			`next=(${next.x.toFixed(2)},${next.z.toFixed(2)})`);
 	}
 
-	// Build a Command from current pilot inputs + sensors. Called once
-	// per RAF requestAnimationFrame (pilot decisions are human-perceptible, no need for inner-
-	// loop rate). Modes:
-	//   fbw   — joystick → cascadeCommand or tilt+yaw_rate
-	//   auto  — waypoint nav (with reactive variant on lidar)
-	//   road  — color sensor → virtual stick
-	//   raw   — arrow-key tilt, integrated yaw heading
-	command(measured, isCascade, deltaTime, simElapsedTime) {
-		// Fall back to a synthetic state if Sim hasn't sampled yet
-		// (first frame after reset). Pilot uses .x/.z/.heading for nav
-		// and reactive paths.
+	// Build an Intent from current pilot inputs + sensors. Called once
+	// per RAF (pilot decisions are human-perceptible, no need for
+	// inner-loop rate).
+	//
+	// Returns one of:
+	//   { intent: 'cruise',   speed, heading,  navTarget, navVelDesired }
+	//   { intent: 'attitude', tilt,  yawRate,  navTarget, navVelDesired }
+	//
+	// Modes:
+	//   fbw   — joystick → cruise (stick.fwd→speed, stick.yaw→Δheading)
+	//   auto  — waypoint nav (with reactive variant on lidar) → cruise
+	//   road  — color sensor → virtual stick → cruise
+	//   raw   — arrow-key tilt + integrated yaw heading → attitude
+	command(measured, deltaTime, simElapsedTime) {
 		const senseOrTruth = measured ?? null;
-		const pilotMode = this.ui.readPilotMode();
-		
-		let tiltSetpoint = 0, yawRateSetpoint = 0;
-		let cascadeCommand = null;
+		const pilotMode    = this.ui.readPilotMode();
+
+		// Cruise modes go through this helper to keep the stick → cruise
+		// math in one place. Returns { speed, heading } given a stick.
+		const stickToCruise = (stick) => {
+			const navGains = this.ui.readNavGains();
+			const speed    = (stick.fwd ?? 0) * navGains.v_max;
+			const yawRate  = (stick.yaw ?? 0) * (navGains.MaxYawRate ?? 1.5);
+			this.keyYawHeading = this._wrap(this.keyYawHeading + yawRate * deltaTime);
+			return { speed, heading: this.keyYawHeading };
+		};
 
 		if (pilotMode === 'fbw' && this.joystick) {
 			const s = this.joystick.value();
-			// Screen-up = forward, screen-right = turn right (negative
-			// yaw_rate, matching ArrowRight's sign convention). Yaw
-			// scaled down — full stick is too aggressive on a balance
-			// bot, easier to drive with a softer turning rate.
 			const FBW_YAW_SCALE = 0.25;
-			const stick = { fwd: s.y, yaw: -s.x * FBW_YAW_SCALE };
+			const { speed, heading } = stickToCruise({ fwd: s.y, yaw: -s.x * FBW_YAW_SCALE });
+			return this._cruise(speed, heading);
+		}
 
-			if (isCascade) {
-				cascadeCommand = { mode: 'fbw', stick };
-			} else {
-				const out = this.nav.updateFBW(senseOrTruth, stick, this.ui.readNavGains(), deltaTime);
-				tiltSetpoint    = out.tilt;
-				yawRateSetpoint = out.yaw_rate;
-			}
-			
-		} else if (pilotMode === 'auto') {
-			// Goal-biased reactive nav — when planner is in 'reactive'
-			// mode, Auto pilot has a waypoint, but obstacle avoidance is
-			// FTG-on-lidar instead of A*. Plugs into the cascade through
-			// the FBW path as a virtual stick.
+		if (pilotMode === 'auto') {
+			// Reactive variant: lidar FTG produces a virtual stick → cruise.
 			if (this.planner.mode === 'reactive') {
 				const stick = this.reactiveNav.update(
-					measured?.lidar,
-					senseOrTruth,
+					measured?.lidar, senseOrTruth,
 					{ x: this.nav.target_x, z: this.nav.target_z },
 					this.lidarMaxRange,
 				);
-				
-				if (isCascade) {
-					cascadeCommand = { mode: 'fbw', stick };
-					
-				} else {
-					const out = this.nav.updateFBW(senseOrTruth, stick, this.ui.readNavGains(), deltaTime);
-					tiltSetpoint    = out.tilt;
-					yawRateSetpoint = out.yaw_rate;
-				}
-			} else if (isCascade) {
-				cascadeCommand = { mode: 'auto' };
-				
-			} else {
-				const out = this.nav.update(senseOrTruth, this.ui.readNavGains(), deltaTime);
-				tiltSetpoint    = out.tilt;
-				yawRateSetpoint = out.yaw_rate;
+				const { speed, heading } = stickToCruise(stick);
+				this.advanceWaypointIfArrived(measured, simElapsedTime);
+				return this._cruise(speed, heading);
 			}
+			// Plain auto: nav.update outputs absolute speed + target heading.
+			const out = this.nav.update(senseOrTruth, this.ui.readNavGains(), deltaTime);
+			this.keyYawHeading = out.heading;   // keep raw-mode reference in sync
 			this.advanceWaypointIfArrived(measured, simElapsedTime);
-
-		} else if (pilotMode === 'road') {
-			// Reactive road pilot — turn the latest color-sensor scan
-			// into a virtual FBW stick. Goes through the cascade's FBW
-			// path so velocity and yaw-rate tracking are handled by the
-			// existing Nav layer.
-			const stick = this.road.update(
-				measured?.road,
-				senseOrTruth?.heading ?? 0,
-				this.lidarMaxRange,   // road sensor uses same range parameter for shape compat
-			);
-			if (isCascade) {
-				cascadeCommand = { mode: 'fbw', stick };
-			} else {
-				const out = this.nav.updateFBW(senseOrTruth, stick, this.ui.readNavGains(), deltaTime);
-				tiltSetpoint    = out.tilt;
-				yawRateSetpoint = out.yaw_rate;
-			}
-		} else {
-			// Raw arrow-key tilt. Integrate the arrow-key yaw rate into
-			// a virtual heading reference so the Attitude layer (cascade)
-			// or yaw torque loop (legacy) gets a meaningful target while
-			// arrows are held.
-			this.keyYawHeading += this.keyYawRate * deltaTime;
-			while (this.keyYawHeading >  Math.PI) this.keyYawHeading -= 2 * Math.PI;
-			while (this.keyYawHeading < -Math.PI) this.keyYawHeading += 2 * Math.PI;
-
-			if (isCascade) {
-				// Bypass Mixer, drive Attitude's pitch_target directly.
-				// heading_rate_ff carries the instantaneous rate so the
-				// bot rotates smoothly between integrated-target updates
-				// instead of stepping.
-				cascadeCommand = {
-					mode:            'tilt',
-					pitch_target:    this.keyTilt,
-					yaw_target:      this.keyYawHeading,
-					heading_rate_ff: this.keyYawRate,
-				};
-			} else {
-				tiltSetpoint    = this.keyTilt;
-				yawRateSetpoint = this.keyYawRate;
-			}
+			return this._cruise(out.speed, out.heading);
 		}
 
+		if (pilotMode === 'road') {
+			const stick = this.road.update(
+				measured?.road, senseOrTruth?.heading ?? 0, this.lidarMaxRange,
+			);
+			const { speed, heading } = stickToCruise(stick);
+			return this._cruise(speed, heading);
+		}
+
+		// Raw arrow-key attitude. Integrate yaw-rate into the heading ref
+		// so subsequent fbw/cruise resumes from the bot's current facing.
+		this.keyYawHeading = this._wrap(this.keyYawHeading + this.keyYawRate * deltaTime);
+		return this._attitude(this.keyTilt, this.keyYawRate);
+	}
+
+	_cruise(speed, heading) {
+		this.nav.vel_desired_last = speed;
 		return {
-			tiltSetpoint,
-			yawRateSetpoint,
-			cascadeCommand,
-			navTarget:      { x: this.nav.target_x, z: this.nav.target_z },
-			navVelDesired:  this.nav.vel_desired_last ?? 0,
+			intent:        'cruise',
+			speed, heading,
+			navTarget:     { x: this.nav.target_x, z: this.nav.target_z },
+			navVelDesired: speed,
 		};
+	}
+
+	_attitude(tilt, yawRate) {
+		return {
+			intent:        'attitude',
+			tilt, yawRate,
+			navTarget:     { x: this.nav.target_x, z: this.nav.target_z },
+			navVelDesired: 0,
+		};
+	}
+
+	_wrap(angle) {
+		while (angle >  Math.PI) angle -= 2 * Math.PI;
+		while (angle < -Math.PI) angle += 2 * Math.PI;
+		return angle;
 	}
 
 	// Auto mode: when the bot is within the arrival radius of the head

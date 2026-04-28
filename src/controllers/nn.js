@@ -32,6 +32,8 @@ export class NNController {
 		this.lastPWM         = 0;
 		this.lastForceFwd    = 0;
 		this.lastTorqueYaw   = 0;
+		this.cruise_active   = false;
+		this.cruise_heading  = 0;
 
 		// Must match NNTrainer's normalization (and order).
 		//          pitch,             pitch_rate,  vel_cart, vel_cart_prev, vel_cart_target
@@ -49,6 +51,16 @@ export class NNController {
 	setAttitude(tilt, yawRate) {
 		this.tilt_target     = tilt    ?? 0;
 		this.yaw_rate_target = yawRate ?? 0;
+		this.cruise_active   = false;
+	}
+
+	// Cruise: NN's natural command is body-frame velocity, so speed maps
+	// directly to vel_cart_target. Heading drives a P-loop in
+	// innerUpdate, same shape as ArduBalance's stabilize_yaw port.
+	setCruise(speed, heading) {
+		this.cruise_active   = true;
+		this.vel_cart_target = speed   ?? 0;
+		this.cruise_heading  = heading ?? 0;
 	}
 
 	outerUpdate() {}
@@ -56,8 +68,21 @@ export class NNController {
 	innerUpdate(sensors, gains, dt, motor) {
 		const force_fwd = this._produceForce(sensors, motor);
 
+		// Cruise mode synthesizes yaw_rate from heading P-loop; otherwise
+		// use the rate set directly via setAttitude.
+		let yaw_rate_target = this.yaw_rate_target;
+		if (this.cruise_active) {
+			const { Kheading = 2, MaxYawRate = 1.5 } = gains;
+			let heading_err = this.cruise_heading - sensors.heading;
+			while (heading_err >  Math.PI) heading_err -= 2 * Math.PI;
+			while (heading_err < -Math.PI) heading_err += 2 * Math.PI;
+			yaw_rate_target = Kheading * heading_err;
+			if (yaw_rate_target >  MaxYawRate) yaw_rate_target =  MaxYawRate;
+			if (yaw_rate_target < -MaxYawRate) yaw_rate_target = -MaxYawRate;
+		}
+
 		const { Kyaw = 0, MaxTauYaw = 5 } = gains;
-		let torque_yaw = Kyaw * (this.yaw_rate_target - sensors.yaw_rate);
+		let torque_yaw = Kyaw * (yaw_rate_target - sensors.yaw_rate);
 		if (torque_yaw >  MaxTauYaw) torque_yaw =  MaxTauYaw;
 		if (torque_yaw < -MaxTauYaw) torque_yaw = -MaxTauYaw;
 

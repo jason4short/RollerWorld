@@ -53,8 +53,9 @@ export class ControllerStack {
 
 		// Pilot-supplied command (mode + stick / pitch_target / etc.). Set
 		// by Rollerbot via applyCommand each frame; consumed by the inner
-		// loop. Default mode keeps the stack idle on first tick.
-		this._command = { mode: 'auto' };
+		// loop. Default is benign tilt-zero — bot holds vertical until
+		// Pilot's first frame lands.
+		this._command = { mode: 'tilt', pitch_target: 0, yaw_target: 0, heading_rate_ff: 0 };
 
 		// Last output of each layer (zero-order hold between firings).
 		this.navOut   = { vel_target_body: 0, heading_target: 0 };

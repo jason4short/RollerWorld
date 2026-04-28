@@ -58,7 +58,7 @@ export class Loop {
 		
 		pilot.maybeReplan(sensors, sim.occupancyGrid, sim.simElapsedTime);
 		
-		const command = pilot.command(sensors, robot.isCascade(),
+		const command = pilot.command(sensors,
 			Math.max(0.001, Math.min(0.1, deltaTime || 0.016)),
 			sim.simElapsedTime);
 			
@@ -149,7 +149,9 @@ export function pushHistory(history, sim, robot, pilot, command, params) {
 		vel_command:	robot.controllers.ardubalance.vel_command ?? 0,
 		vel_desired:	pilot.nav.vel_desired_last ?? robot.stack.mixer.vel_target ?? 0,
 		err_x:			pilot.nav.err_last ?? robot.stack.nav.distance_err ?? 0,
-		tilt_sp:		isCascade ? (robot.stack.mixer.pitch_target ?? 0) : command.tiltSetpoint,
+		tilt_sp:		command.intent === 'attitude'
+							? command.tilt
+							: (robot.stack.mixer.pitch_target ?? 0),
 		// Cascade-specific traces (zero in legacy modes).
 		pitch_target:	robot.stack.mixer.pitch_target ?? 0,
 		force_fwd:		robot.stack.attitude.lastForceFwd ?? 0,
