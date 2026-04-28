@@ -218,7 +218,7 @@ export class App {
 		const torqueLim = this.ui.num('att_torque_max') || 2;
 		const SIGNALS = {
 			mixer: [
-				{ key: 'vel_cart',     color: '#6cf', scale: 1 / 3,      label: 'vel' },
+				{ key: 'vel_bot',     color: '#6cf', scale: 1 / 3,      label: 'vel' },
 				{ key: 'vel_desired',  color: '#fc6', scale: 1 / 3,      label: 'target' },
 				{ key: 'pitch_target', color: '#f6c', scale: 1 / tiltLim, label: 'tilt' },
 			],
@@ -242,7 +242,7 @@ export class App {
 
 	populatePlotMenus() {
 		const keys = Object.keys(PLOT_SIGNALS);
-		const defaults = ['pitch', 'vel_cart', 'vel_desired'];	 // sensible for nav debugging
+		const defaults = ['pitch', 'vel_bot', 'vel_desired'];	 // sensible for nav debugging
 		for (let i = 0; i < 3; i++) {
 			const sel = document.getElementById(`plot${i + 1}`);
 			sel.innerHTML = '<option value="none">(none)</option>' +

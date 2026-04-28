@@ -1,6 +1,6 @@
 // Neural-net controller. Replaces the full ArduBalance cascade AND nav's
 // velocity-tracking step with a single MLP that maps
-// (pitch, pitch_rate, vel_cart, vel_cart_prev, vel_cart_target) → PWM.
+// (pitch, pitch_rate, vel_bot, vel_bot_prev, vel_bot_target) → PWM.
 // The MLP is trained offline (see trainer.js) to mimic the combined
 // nav-tilt + ArduBalance pipeline; at runtime we just evaluate it forward.
 //
@@ -8,7 +8,7 @@
 // nav-layer concern; the controller's job is to track a commanded body-frame
 // velocity. Yaw is a separate per-controller branch (see fastLoop).
 //
-// `vel_cart_prev` (last tick's cart velocity) is the damping channel — the
+// `vel_bot_prev` (last tick's cart velocity) is the damping channel — the
 // NN can learn its own d/dt internally without us hand-rolling a noisy
 // finite-difference. Without it, only angular damping (via pitch_rate) is
 // available and the bot rocks back and forth on the wheel axis.
@@ -19,7 +19,7 @@
 //   c.fastLoop(sensors, gains, dt, motor)
 //                          → { torque_left, torque_right }
 //
-// vel_cart_target is set by Pilot/Rollerbot via a separate property
+// vel_bot_target is set by Pilot/Rollerbot via a separate property
 // (the NN's natural command channel is velocity, not attitude).
 
 export class NNController {
@@ -27,8 +27,8 @@ export class NNController {
 		this.mlp             = null;   // set by the trainer
 		this.tilt_target     = 0;      // unused at inference time
 		this.yaw_rate_target = 0;
-		this.vel_cart_target = 0;      // commanded body-frame velocity (m/s)
-		this.vel_cart_prev   = 0;      // last tick's cart velocity
+		this.vel_bot_target = 0;      // commanded body-frame velocity (m/s)
+		this.vel_bot_prev   = 0;      // last tick's cart velocity
 		this.lastPWM         = 0;
 		this.lastForceFwd    = 0;
 		this.lastTorqueYaw   = 0;
@@ -36,14 +36,14 @@ export class NNController {
 		this.cruise_heading  = 0;
 
 		// Must match NNTrainer's normalization (and order).
-		//          pitch,             pitch_rate,  vel_cart, vel_cart_prev, vel_cart_target
+		//          pitch,             pitch_rate,  vel_bot, vel_bot_prev, vel_bot_target
 		this.inScale  = [1 / (Math.PI / 3), 1 / 10, 1 / 3,    1 / 3,         1 / 3];
 		this.outScale = 2000;          // denormalize NN output → PWM
 	}
 
 	reset() {
 		this.lastPWM       = 0;
-		this.vel_cart_prev = 0;
+		this.vel_bot_prev = 0;
 		this.lastForceFwd  = 0;
 		this.lastTorqueYaw = 0;
 	}
@@ -55,11 +55,11 @@ export class NNController {
 	}
 
 	// Cruise: NN's natural command is body-frame velocity, so speed maps
-	// directly to vel_cart_target. Heading drives a P-loop in
+	// directly to vel_bot_target. Heading drives a P-loop in
 	// fastLoop, same shape as ArduBalance's stabilize_yaw port.
 	setCruise(speed, heading) {
 		this.cruise_active   = true;
-		this.vel_cart_target = speed   ?? 0;
+		this.vel_bot_target = speed   ?? 0;
 		this.cruise_heading  = heading ?? 0;
 	}
 
@@ -99,13 +99,13 @@ export class NNController {
 	_produceForce(sensors, motor) {
 		if (!this.mlp) return 0;
 
-		const vel_cart = sensors.vel_cart;
+		const vel_bot = sensors.vel_bot;
 		const x = [
 			sensors.pitch        * this.inScale[0],
 			sensors.pitch_rate   * this.inScale[1],
-			vel_cart             * this.inScale[2],
-			this.vel_cart_prev   * this.inScale[3],
-			this.vel_cart_target * this.inScale[4],
+			vel_bot             * this.inScale[2],
+			this.vel_bot_prev   * this.inScale[3],
+			this.vel_bot_target * this.inScale[4],
 		];
 		const out = this.mlp.forward(x);
 		let pwm = out[0] * this.outScale;
@@ -121,7 +121,7 @@ export class NNController {
 		if (pwm >  PM) pwm =  PM;
 		if (pwm < -PM) pwm = -PM;
 		this.lastPWM       = pwm;
-		this.vel_cart_prev = vel_cart;
-		return motor.forceFromPWM(pwm, vel_cart);
+		this.vel_bot_prev = vel_bot;
+		return motor.forceFromPWM(pwm, vel_bot);
 	}
 }

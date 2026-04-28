@@ -12,6 +12,13 @@ export const YAW_HOLD            = 0; // hold nav_yaw
 export const YAW_ACRO            = 1; // pilot rate stick
 export const YAW_LOOK_AT_NEXT_WP = 2; // nav_yaw = wp_bearing
 
+// Firmware ran angles in centidegrees (hundredths of a degree, int32_t).
+// 1° = 100 cd. 90° = 9000 cd. ±180° = ±18000 cd.
+// We sample angles in radians (sim convention), then convert at the
+// controller boundary so bal_P / bal_D / Kheading take their old
+// firmware-tuned values straight from Parameters.pde.
+const RAD_TO_CD = 18000 / Math.PI;   // ≈ 5729.578
+
 // ArduBalance — port of the firmware's main control flow, kept as close
 // to the original ArduBalance.pde structure as possible so the codepaths
 // in this file map line-for-line to the .pde files in /ArduBalance.
@@ -86,7 +93,7 @@ export class ArduBalanceController {
 		// next_WP whether you're in AUTO or FBW); keeping it that way.
 		this.target_x        = 0;
 		this.target_z        = 0;
-		this.min_speed       = 0;        // floor for desired_ticks (m/s)
+		this.min_speed       = .17;        // floor for desired_ticks (m/s)
 
 		this.pwmTable        = new PWMTable();   // FF curve (linear until calibrated)
 
@@ -97,23 +104,31 @@ export class ArduBalanceController {
 		// Per-tick scratch ----------------------------------------------------
 		this.pitch_speed        = 0;     // output of update_roll_pitch_mode
 		this.yaw_speed          = 0;     // output of update_yaw_mode
-		this.pwm_left           = 0;     // output of update_servos
-		this.pwm_right          = 0;
+		this.pwm_left           = 0;     // outputs of update_servos (PWM only;
+		this.pwm_right          = 0;     // motor sim happens in Rollerbot)
 		this.nav_yaw            = 0;     // current yaw target (rad)
 
 		// Persistent state ----------------------------------------------------
-		this.balance_offset     = 0;     // learned IMU zero-offset (rad)
+		this.balance_offset     = 0;     // learned IMU zero-offset (cd, firmware-native)
 		this.speed_I            = 0;     // get_nav_pitch integrator
-		this.last_vel_cart_meas = 0;     // get_nav_pitch D-on-measurement
-		this.speed_d_lpf        = 0;     // low-passed derivative
 		this.desired_ticks_old  = 0;     // get_nav_pitch accel limit memory
 
+		// Persistent state for pid_nav (firmware: APM_PID instance fields)
+		this._last_error        = 0;
+		this._last_derivative   = 0;
+
 		// Diagnostics (drained by telemetry / plotter) -----------------------
-		this.dist_err           = 0;     // most recent get_dist_err
-		this.desired_ticks      = 0;     // most recent desired_ticks
 		this.lastPWM            = 0;     // larger-magnitude wheel (firmware-style scalar)
-		this.lastForceFwd       = 0;
-		this.lastTorqueYaw      = 0;
+
+		// First-tick re-anchor of next_WP. Firmware called init_home() at
+		// boot which zeroed current_loc/next_WP to "wherever the bot is now,"
+		// so the FBW header's `if(stick) next_WP = current_loc` was correct
+		// even on the first frame. Our sim uses absolute world coords —
+		// next_WP=(0,0) doesn't equal the bot's spawn pose, so without this
+		// sentinel the first FBW/STABLE tick reads a stale target tens of
+		// meters away. Snapshot once on mode entry; the firmware-style
+		// stick-deflection check takes over from there.
+		this._needsHoldSnapshot = true;
 	}
 
 	// Pilot interface ---------------------------------------------------------
@@ -124,6 +139,7 @@ export class ArduBalanceController {
 	//   FBW joystick        → FBW    + HOLD              (pilot owns speed + heading)
 	//   auto waypoint       → AUTO   + LOOK_AT_NEXT_WP   (controller owns everything)
 	setAttitude(tilt, yawRate) {
+		if (this.roll_pitch_mode !== ROLL_PITCH_STABLE) this._needsHoldSnapshot = true;
 		this.roll_pitch_mode = ROLL_PITCH_STABLE;
 		this.yaw_mode        = YAW_ACRO;
 		this.target_angle    = tilt    ?? 0;
@@ -131,6 +147,7 @@ export class ArduBalanceController {
 	}
 
 	setCruise(speed, heading) {
+		if (this.roll_pitch_mode !== ROLL_PITCH_FBW) this._needsHoldSnapshot = true;
 		this.roll_pitch_mode = ROLL_PITCH_FBW;
 		this.yaw_mode        = YAW_HOLD;
 		this.cruise_speed    = speed   ?? 0;
@@ -143,7 +160,7 @@ export class ArduBalanceController {
 		this.yaw_mode        = YAW_LOOK_AT_NEXT_WP;
 		this.target_x        = target_x ?? 0;
 		this.target_z        = target_z ?? 0;
-		this.min_speed       = min_speed ?? 0;
+		this.min_speed       = min_speed ?? 0.17;
 		this.target_angle    = 0;
 	}
 
@@ -157,11 +174,20 @@ export class ArduBalanceController {
 	//   update_yaw_mode();
 	//   update_servos();
 	//
-	// Returns the per-wheel torque shape Rollerbot consumes.
-	fastLoop(sensors, gains, dt, motor) {
+	// All three are void — they read/write member state, just like the
+	// firmware. fastLoop hands Rollerbot the per-wheel PWMs that
+	// update_servos wrote; Rollerbot simulates the motor (PWM → force)
+	// in its own _fastLoop since that's the physical world's job, not
+	// the controller's.
+	fastLoop(sensors, gains, dt /*, motor */) {
 		this.update_roll_pitch_mode(sensors, gains, dt);
 		this.update_yaw_mode(sensors, gains);
-		return this.update_servos(sensors, gains, motor);
+		this.update_servos(sensors, gains);
+
+		return {
+			pwm_left:  this.pwm_left,
+			pwm_right: this.pwm_right,
+		};
 	}
 
 	// ──────────────────────────────────────────────────────────────────────
@@ -185,21 +211,28 @@ export class ArduBalanceController {
 			// freezes and get_nav_pitch(0, get_dist_err()) drives back.
 			// Without this the bot rolls away on encoder bias even though
 			// the pitch loop is balancing it.
-			case ROLL_PITCH_STABLE:
-				if (this.target_angle !== 0) {
+			case ROLL_PITCH_STABLE: {
+				// we always hold position
+				if (this.target_angle !== 0 || this._needsHoldSnapshot) {
+					// reset position
 					this.target_x = sensors.x;
 					this.target_z = sensors.z ?? 0;
 					this.speed_I  = 0;
+					this._needsHoldSnapshot = false;
 				}
-				this.dist_err = this.get_dist_err(sensors);
 
 				// in this mode we command the target angle
-				pitch_speed  = this.get_stabilize_pitch(this.target_angle, sensors, gains, dt);
+				let bal_out = this.get_stabilize_pitch(this.target_angle, sensors, gains, dt);
+
 				// speed control:
-				pitch_speed += this.get_velocity_pitch(sensors, gains);
+				let vel_out = this.get_velocity_pitch(sensors, gains);
+
 				// maintain location:
-				pitch_speed += this.get_nav_pitch(0, this.dist_err, sensors, gains, dt);
+				let nav_out = this.get_nav_pitch(0, this.get_dist_err(sensors), sensors, gains, dt);
+
+				pitch_speed = (bal_out + vel_out + nav_out);
 				break;
+			}
 
 			// ──────────────────────────────────────────────────────────
 			// ROLL_PITCH_FBW  — ArduBalance.pde:1314
@@ -217,35 +250,43 @@ export class ArduBalanceController {
 			// of from dist_err — different shape, same components.
 			case ROLL_PITCH_FBW: {
 				// hold position if we let go of sticks
-				if (this.cruise_speed !== 0) {
+				if (this.cruise_speed !== 0 || this._needsHoldSnapshot) {
 					// reset position
 					this.target_x = sensors.x;
 					this.target_z = sensors.z ?? 0;
 					this.speed_I  = 0;
+					this._needsHoldSnapshot = false;
 				}
 
-				this.dist_err = this.get_dist_err(sensors);
+				// distance_error = (float)long_error * cos_yaw_x + (float)lat_error * sin_yaw_y;
+				const dx = this.target_x - sensors.x;
+				const dz = this.target_z - (sensors.z ?? 0);
+				
+				const distance_error = dx * Math.cos(sensors.heading) - dz * Math.sin(sensors.heading);
 
 				// defaulting to 500 / 12 = 41cm/s = 1.5r/s = 1200e/s
 				let desired_speed;
 				if (this.cruise_speed === 0) {
-					desired_speed = this.dist_err;
+					desired_speed = distance_error;
 				} else {
-					const v_max = gains.v_max ?? 0.8;
-					desired_speed = Math.max(-v_max, Math.min(v_max, this.cruise_speed));
+					desired_speed = this.cruise_speed;                                 // units = m/s (firmware: cm/s)
+					desired_speed = Math.max(-0.8, Math.min(0.8, desired_speed));      // ±80 cm/s = ±0.8 m/s
 				}
-				this.desired_ticks = desired_speed;
 
-				const speed_error = sensors.vel_cart - desired_speed;
+				// switching units to ticks  (firmware: convert_distance_to_encoder_speed —
+				// no-op here, we're already in m/s; line kept for shape parity)
+				let speed_error = sensors.vel_bot - desired_speed;
 
 				// 4 components of stability and navigation
-				const bal_out = this.get_stabilize_pitch(0, sensors, gains, dt);    // hold as vertical as possible
-				const vel_out = this.get_velocity_pitch(sensors, gains);            // magic
-				const ff_out  = this.get_ff_out(desired_speed, gains);              // allows us to roll while vertical
-				const nav_out = this.pid_nav(speed_error, sensors, gains, dt);      // allows us to accelerate
+				let bal_out = this.get_stabilize_pitch(0, sensors, gains, dt);    // hold as vertical as possible
+				let vel_out = this.get_velocity_pitch(sensors, gains);            // magic
+				let ff_out  = desired_speed * gains.ff_per_mps;                   // allows us to roll while vertical
+				let nav_out = this.pid_nav(speed_error, gains, dt);               // allows us to accelerate
 
 				// sum the output
-				pitch_speed = bal_out + vel_out + nav_out - ff_out;
+				//pitch_speed = (bal_out + vel_out + nav_out - ff_out);
+				pitch_speed = (bal_out);
+				console.log("bal_out",bal_out ,"vel_out", vel_out ,"nav_out", nav_out ,"ff_out", ff_out);
 				break;
 			}
 
@@ -261,10 +302,14 @@ export class ArduBalanceController {
 			// min_speed = 0 in LOITER, 500 ticks/sec elsewhere — kept here
 			// as the controller's `min_speed` field (m/s in our units).
 			case ROLL_PITCH_AUTO:
-				this.dist_err = this.get_dist_err(sensors);
-				pitch_speed   = this.get_stabilize_pitch(0, sensors, gains, dt);
-				pitch_speed  += this.get_velocity_pitch(sensors, gains);
-				pitch_speed  += this.get_nav_pitch(this.min_speed, this.dist_err, sensors, gains, dt);
+				// in this mode we command the target angle
+				pitch_speed  = this.get_stabilize_pitch(0, sensors, gains, dt);
+
+				// speed control:
+				pitch_speed += this.get_velocity_pitch(sensors, gains);
+
+				// maintain location:
+				pitch_speed += this.get_nav_pitch(this.min_speed, this.get_dist_err(sensors), sensors, gains, dt);
 				break;
 		}
 
@@ -314,23 +359,44 @@ export class ArduBalanceController {
 				this.yaw_speed = Kheading * this.yaw_rate_target * 100;
 			}
 		}
+		this.yaw_speed = 0;
 	}
 
 	// ──────────────────────────────────────────────────────────────────────
 	// update_servos  — motors.pde:60
 	// ──────────────────────────────────────────────────────────────────────
-	// Differential mix of pitch_speed and yaw_speed into per-wheel PWMs,
-	// then deadband + saturation. Firmware also wrote the PWMs straight to
-	// hardware; here we convert per-wheel PWM → per-wheel force via the
-	// motor model so Rollerbot's downstream pipeline can integrate into the
-	// plant.
-	update_servos(sensors, gains, motor) {
+	// Void in the firmware (writes to motor_out[] and to hardware). Void
+	// here too — writes only PWM. The PWM → force response is the
+	// physical world's job in the firmware; in our sim it lives in
+	// Rollerbot, which reads pwm_left/pwm_right and asks the motor what
+	// force they produce. Keeps update_servos a pure firmware port.
+	update_servos(_sensors, gains, _motor) {
 		const { dead_zone = 0, PWM_max = 2000 } = gains;
 
-		// Differential mix. Firmware multiplies by wheel_mixer.kP per side;
-		// here we leave that gain at 1 (it just scales magnitude).
-		let pwm_left  = this.pitch_speed + this.yaw_speed;
-		let pwm_right = this.pitch_speed - this.yaw_speed;
+
+
+		// Differential mix. Firmware lines:
+		//
+		//   motor_out[LEFT]  = (pitch_speed + yaw_speed) * pid_wheel_left_mixer.kP();
+		//   motor_out[RIGHT] = (pitch_speed - yaw_speed) * pid_wheel_right_mixer.kP();
+		//
+		// The two wheel-mixer kPs typically had OPPOSITE SIGNS in firmware
+		// tuning — the right motor on the real bot was mounted facing the
+		// opposite way from the left, so equal PWMs would have spun the
+		// chassis. Flipping the right-side kP made +pitch_speed produce
+		// equal-magnitude opposite-sign PWMs that BOTH push the chassis
+		// forward. Same convention here: identical pwm_left/pwm_right
+		// will spin the bot, just like setting both motor channels to
+		// 2000 on the real hardware.
+		// Firmware: pid_wheel_left_mixer.kP() was NEGATIVE, pid_wheel_right_mixer.kP()
+		// was POSITIVE. Two sign tricks combined: (a) firmware's pitch_speed is
+		// "neg = forward lean" so kP_L's negative sign flips that into a chassis-
+		// forward push for the left wheel; (b) the right motor is physically
+		// mirrored, so its kP is the opposite sign of kP_L. Same convention here.
+		const kP_L = -0.5;
+		const kP_R = -kP_L;   // = +0.5; firmware mirror
+		let pwm_left  = (this.pitch_speed + this.yaw_speed) * kP_L;
+		let pwm_right = (this.pitch_speed - this.yaw_speed) * kP_R;
 
 		// Deadband-jump compensation, applied symmetrically to both wheels.
 		if (pwm_left  > 0) pwm_left  += dead_zone;
@@ -341,195 +407,151 @@ export class ArduBalanceController {
 		pwm_left  = Math.max(-PWM_max, Math.min(PWM_max, pwm_left));
 		pwm_right = Math.max(-PWM_max, Math.min(PWM_max, pwm_right));
 
+		// Firmware here calls hal.rcout->write(CH_1, ...). We write to
+		// instance fields and let Rollerbot (the "hardware") read them.
 		this.pwm_left  = pwm_left;
 		this.pwm_right = pwm_right;
+//		console.log(this.pwm_left);
 		this.lastPWM   = Math.abs(pwm_left) > Math.abs(pwm_right) ? pwm_left : pwm_right;
-
-		// Per-wheel velocity for the back-EMF term in motor.forceFromPWM.
-		const wb     = gains.wheelbase ?? motor.wheelbase;
-		const half   = wb / 2;
-		const v_left  = sensors.vel_cart - sensors.yaw_rate * half;
-		const v_right = sensors.vel_cart + sensors.yaw_rate * half;
-
-		const torque_left  = motor.forceFromPWM(pwm_left,  v_left);
-		const torque_right = motor.forceFromPWM(pwm_right, v_right);
-
-		// Realized chassis quantities (telemetry / plotter only).
-		this.lastForceFwd  = torque_left + torque_right;
-		this.lastTorqueYaw = (torque_right - torque_left) * half;
-
-		// Returning pwm_left/right alongside the per-wheel forces tells
-		// Rollerbot to bypass motor.applyTorque's inverse-model PI for us
-		// — the PWMs we just computed already ARE the firmware's final
-		// motor output, so re-deriving them via FF would be a round trip
-		// through the motor model. Direct path keeps the firmware codepath
-		// reaching the plant unchanged.
-		return { torque_left, torque_right, pwm_left, pwm_right };
 	}
 
 	// ──────────────────────────────────────────────────────────────────────
-	// get_stabilize_pitch  — Attitude.pde:14
+	// get_stabilize_pitch  — Attitude.pde:15
 	// ──────────────────────────────────────────────────────────────────────
-	// Angle PD plus a slow auto-trim of balance_offset when the bot is
-	// quiet near vertical. Returns PWM contribution for pitch_speed.
+	// Direct port. The only forced changes are:
+	//   - convert sensors from rad to cd at the top (sim samples in rad)
+	//   - `this.` instead of firmware globals (balance_offset, gains)
+	//   - `dt` parameter instead of `G_Dt` global
+	// Everything below the conversion block reads against the .pde file.
 	get_stabilize_pitch(target_angle, sensors, gains, dt) {
-		const { bal_P, bal_D, bal_I } = gains;
-		const pitch     = sensors.pitch + this.balance_offset;
-		const angle_err = pitch - target_angle;
+		const pitch_sensor = sensors.pitch * RAD_TO_CD;
+		target_angle       = target_angle * RAD_TO_CD;
+		const omega_y      = sensors.pitch_rate * RAD_TO_CD;
 
-		// Firmware gated auto-trim on (target_angle == 0); we add a quiet
-		// check on angle_err so a real sustained lean doesn't get absorbed
-		// as bias, and a 60 s leak so a stale offset can't survive.
-		const quiet = Math.abs(target_angle) < 0.01
-		           && Math.abs(angle_err)    < 0.04;
-		if (quiet) this.balance_offset += bal_I * angle_err * dt;
-		this.balance_offset *= (1 - dt / 60);
+		let angle_error = this.wrap_180(target_angle - (pitch_sensor + this.balance_offset));
 
-		// D on raw gyro, not d(err)/dt — avoids a derivative kick when the
-		// pilot snaps target_angle. (Firmware did the same: its PID helper
-		// ate gyro directly as the rate input.)
-		return bal_P * angle_err + bal_D * sensors.pitch_rate;
+		// dynamically adjust the CG when we are supposed to be at vertical
+		if (target_angle === 0) {
+			this.balance_offset += gains.bal_I * angle_error * dt;
+		}
+		let rate_error = 0 - omega_y;
+
+		let bal_P = gains.bal_P * angle_error;
+		let bal_D = gains.bal_D * rate_error;
+
+		let torque = bal_P + bal_D;
+		return torque;
 	}
 
 	// ──────────────────────────────────────────────────────────────────────
 	// get_velocity_pitch  — Attitude.pde:40
 	// ──────────────────────────────────────────────────────────────────────
 	get_velocity_pitch(sensors, gains) {
-		return gains.p_vel * sensors.vel_cart;
+		// 1.2
+		return gains.p_vel * sensors.vel_bot;
 	}
 
 	// ──────────────────────────────────────────────────────────────────────
 	// get_nav_pitch  — navigation.pde:160
 	// ──────────────────────────────────────────────────────────────────────
-	// Firmware signature: get_nav_pitch(int16_t speed, int16_t dist_err).
-	// Same here: takes a min-speed floor and the projected distance error,
-	// computes desired_ticks via convert + accel limit + min floor, then
-	// returns (nav_out − ff_out).
-	//
-	//   desired_ticks = convert_distance_to_encoder_speed(dist_err);
-	//   desired_ticks = min(desired_ticks, desired_ticks_old + 10);
-	//   desired_ticks = max(desired_ticks, speed);
-	//   wheel_speed_error = wheel.speed - desired_ticks;
-	//   ff_out  = desired_ticks * throttle;
-	//   nav_out = pid_nav.get_pid(wheel_speed_error, G_Dt);
-	//   return constrain(nav_out − ff_out, ±2000);
-	get_nav_pitch(min_speed, dist_err, sensors, gains, dt) {
-		const { PWM_max = 2000 } = gains;
+	// Direct port. Forced changes only:
+	//   - sensors / gains / dt parameters instead of firmware globals
+	//   - `pid_nav.get_pid` is our `pid_nav` method (no PID class)
+	//   - desired_ticks_old is `this._desired_ticks_old` (no `static` locals in JS)
+	get_nav_pitch(speed, dist_err, sensors, gains, dt) {
+		let nav_out, ff_out, wheel_speed_error;
 
-		this.desired_ticks = this.convert_distance_to_speed(dist_err, min_speed, gains, dt);
+		// this is the speed of the wheels: 1000 = 1 rotation of the wheels.
+		// We convert cm to rpm based on wheel diamter and encoder ticks per revolution
+		let desired_ticks = this.convert_distance_to_encoder_speed(dist_err, gains);
 
-		const wheel_speed_error = sensors.vel_cart - this.desired_ticks;
-		const ff_out            = this.get_ff_out(this.desired_ticks, gains);
-		const nav_out           = this.pid_nav(wheel_speed_error, sensors, gains, dt);
+		// accleration is limited to prevent wobbly starts towards waypoints
+		desired_ticks = Math.min(desired_ticks, this.desired_ticks_old + (gains.a_max ?? 1.5) * dt);
+		desired_ticks = Math.max(desired_ticks, speed);
+		this.desired_ticks_old = desired_ticks;
 
-		const result = nav_out - ff_out;
-		return Math.max(-PWM_max, Math.min(PWM_max, result));
-	}
+		// grab the wheel speed error
+		wheel_speed_error = sensors.vel_bot - desired_ticks;
 
+		ff_out  = desired_ticks * gains.ff_per_mps;            // allows us to roll while vertical
+		nav_out = this.pid_nav(wheel_speed_error, gains, dt);
 
-static int16_t
-get_nav_pitch(int16_t speed, int16_t dist_err)
-{
-	static int16_t desired_ticks_old = 0;
-	int16_t nav_out, ff_out, wheel_speed_error;
-
-    // this is the speed of the wheels: 1000 = 1 rotation of the wheels.
-    // We convert cm to rpm based on wheel diamter and encoder ticks per revolution
-    desired_ticks 	= convert_distance_to_encoder_speed(dist_err);
-
-	// accleration is limited to prevent wobbly starts towards waypoints
-	desired_ticks 	= min(desired_ticks, desired_ticks_old + 10);// limit going faster
-	desired_ticks 	= max(desired_ticks, speed);
-	desired_ticks_old = desired_ticks;
-
-	// grab the wheel speed error
-	wheel_speed_error 	= wheel.speed - desired_ticks;
-
-    ff_out          = (float)desired_ticks * g.throttle; // allows us to roll while vertical
-	nav_out      	= g.pid_nav.get_pid(wheel_speed_error, G_Dt);
-
-    return constrain((nav_out - ff_out), -2000, 2000);
-}
-
-
-
-
-	// ──────────────────────────────────────────────────────────────────────
-	// pid_nav.get_pid  — Parameters / firmware PID helper
-	// ──────────────────────────────────────────────────────────────────────
-	// The speed PID's P/I/D piece. Pulled out so FBW (which sums components
-	// inline) and AUTO (which delegates to get_nav_pitch) share the same
-	// integrator + derivative state. Anti-windup gates I on PWM saturation.
-	pid_nav(speed_error, sensors, gains, dt) {
-		const { wheel_P, wheel_I, wheel_D, PWM_max = 2000 } = gains;
-
-		const saturated = Math.abs(this.lastPWM) >= (PWM_max - 1);
-		if (!saturated) this.speed_I += speed_error * dt;
-
-		// D on measurement (no kick when desired jumps), 20 ms LPF.
-		const raw_d = (sensors.vel_cart - this.last_vel_cart_meas) / dt;
-		this.last_vel_cart_meas = sensors.vel_cart;
-		const alpha = dt / (0.02 + dt);
-		this.speed_d_lpf = (1 - alpha) * this.speed_d_lpf + alpha * raw_d;
-
-		return wheel_P * speed_error
-		     + wheel_I * this.speed_I
-		     + wheel_D * this.speed_d_lpf;
+		return Math.max(-2000, Math.min(2000, nav_out - ff_out));
 	}
 
 	// ──────────────────────────────────────────────────────────────────────
-	// ff_out  — navigation.pde:177  (the "throttle while vertical" term)
+	// pid_nav.get_pid  — APM_PID::get_pid (firmware PID helper class)
 	// ──────────────────────────────────────────────────────────────────────
-	//
-	//   ff_out = (float)desired_ticks * g.throttle;
-	//
-	// Firmware used a single throttle scalar; we reuse the calibrated
-	// PWM-from-speed table (with ff_per_mps as the linear-fallback slope).
-	get_ff_out(desired_speed, gains) {
-		this.pwmTable.linearSlope = gains.ff_per_mps;
-		return this.pwmTable.pwmFromSpeed(desired_speed);
+	// Direct port of the firmware PID class's get_pid method. Forced
+	// changes: gains read via the gains arg (no PID class with kP/kI/kD
+	// member fields); state stored on `this` (no PID instance).
+	pid_nav(error, gains, dt) {
+		const _kp     = gains.wheel_P;
+		const _ki     = gains.wheel_I;
+		const _kd     = gains.wheel_D;
+		const _filter = 0.02;            // discrete LPF time constant
+		const _imax   = gains.wheel_I_max ?? 500;
+
+		let output = error * _kp;
+
+		if (Math.abs(_kd) > 0 && dt > 0) {
+			let derivative = (error - this._last_error) / dt;
+			// discrete low pass filter, cuts out the high frequency noise
+			// that can drive the controller crazy
+			derivative = this._last_derivative + (dt / (_filter + dt)) * (derivative - this._last_derivative);
+			this._last_error      = error;
+			this._last_derivative = derivative;
+			output += _kd * derivative;
+		}
+
+		if (Math.abs(_ki) > 0 && dt > 0) {
+			this.speed_I += (error * _ki) * dt;
+			if (this.speed_I < -_imax) this.speed_I = -_imax;
+			else if (this.speed_I >  _imax) this.speed_I =  _imax;
+			output += this.speed_I;
+		}
+
+		return output;
 	}
 
 	// ──────────────────────────────────────────────────────────────────────
 	// get_stabilize_yaw  — Attitude.pde:48
 	// ──────────────────────────────────────────────────────────────────────
-	// Heading P → yaw_speed in PWM units. Firmware divided by wheel_ratio
-	// to bring the output into the same units as pitch_speed; here we use
-	// a magnitude-matching constant so update_servos can sum them
-	// directly.
-	get_stabilize_yaw(target_yaw, sensors, gains) {
-		const { Kheading = 2, MaxYawRate = 1.5 } = gains;
-		let heading_err = target_yaw - sensors.heading;
-		while (heading_err >  Math.PI) heading_err -= 2 * Math.PI;
-		while (heading_err < -Math.PI) heading_err += 2 * Math.PI;
+	// Direct port. Forced changes only:
+	//   - convert sensors from rad to cd at the top
+	//   - `gains.Kheading` instead of `g.pid_yaw.get_p` PID helper
+	//   - `wheel_ratio` divisor folded into the per-side kP at update_servos
+	//     (kP_L = +1, kP_R = −1), so it's not present here
+	get_stabilize_yaw(target_angle, sensors, gains) {
+		const yaw_sensor = sensors.heading * RAD_TO_CD;
+		target_angle     = target_angle * RAD_TO_CD;
 
-		// First a clamped rate target (rad/s), then scale to PWM units.
-		// Splitting it this way keeps MaxYawRate's meaning in physical
-		// units while letting yaw_speed live in PWM space.
-		let rate = Kheading * heading_err;
-		if (rate >  MaxYawRate) rate =  MaxYawRate;
-		if (rate < -MaxYawRate) rate = -MaxYawRate;
+		let angle_error;
 
-		// Convert rate (rad/s) → PWM units. 100 PWM per rad/s lands
-		// MaxYawRate ≈ 1.5 at 150 PWM, well below pitch_speed magnitudes
-		// so yaw stays a small correction at top-speed cruise. Tunable.
-		return rate * 100;
+		// angle error
+		angle_error = this.wrap_180(target_angle - yaw_sensor);
+
+		// limit the error we're feeding to the PID
+		angle_error = Math.max(-1000, Math.min(1000, angle_error));
+		let output  = gains.Kheading * angle_error;
+		return output;
 	}
 
 	// ──────────────────────────────────────────────────────────────────────
 	// get_dist_err  — navigation.pde:183
 	// ──────────────────────────────────────────────────────────────────────
-	// Project (target − current_pos) onto the bot's forward axis.
-	// Firmware constrained the result to [0, 45] cm — never reverses for
-	// nav, never overshoots more than 45 cm of "forward speed worth" of
-	// error. We keep the clamp-≥-0 (no reverse) but skip the upper bound
-	// (Pilot's own waypoint cycling caps it).
+	// Project (target − current_pos) onto the bot's forward axis, then
+	// clamp to [0, 0.45 m]. Firmware was [0, 45] cm — same cap, just SI
+	// units. This is the safety the firmware relied on so a far waypoint
+	// (or stale next_WP) couldn't make desired_ticks blow up via
+	// wheel_P · speed_error. Without it the inner PID happily commands
+	// 45 m/s when the snapshot is stale and the bot launches into orbit.
 	get_dist_err(sensors) {
 		const dx = this.target_x - sensors.x;
 		const dz = this.target_z - (sensors.z ?? 0);
 		// Our heading convention: forward = (cos h, −sin h).
 		const proj = dx * Math.cos(sensors.heading) - dz * Math.sin(sensors.heading);
-		return Math.max(0, proj);
+		return Math.max(0, Math.min(0.45, proj));
 	}
 
 	// ──────────────────────────────────────────────────────────────────────
@@ -542,41 +564,58 @@ get_nav_pitch(int16_t speed, int16_t dist_err)
 	}
 
 	// ──────────────────────────────────────────────────────────────────────
-	// convert_distance_to_encoder_speed  — first three lines of
-	// get_nav_pitch (navigation.pde:167-172)
+	// wrap_180  — firmware utility (used everywhere a heading error is
+	//             fed to a P loop)
 	// ──────────────────────────────────────────────────────────────────────
+	// Folds an angle into [-18000, +18000] cd — i.e., the shortest signed
+	// rotation between two headings. Without this, a target at 10° and a
+	// measured heading at 350° would produce a -340° error and the bot
+	// would pirouette instead of just turning 20° right.
 	//
-	//   desired_ticks = convert_distance_to_encoder_speed(dist_err);
-	//   desired_ticks = min(desired_ticks, desired_ticks_old + 10);
-	//   desired_ticks = max(desired_ticks, speed);
-	//
-	// Firmware mapped cm-of-distance → ticks/sec via wheel radius and
-	// encoder constants. In our SI units this collapses to a gain
-	// (Kp_nav, m/s per m of distance) plus a per-tick accel limit
-	// plus a min-speed floor.
-	//
-	// AVC field-tape note: that "+10" in the firmware was duct tape.
-	// During practice runs at the venue, every waypoint hop kicked
-	// desired_ticks hard enough to knock the bot over before the
-	// balance loop could catch it. Capping the per-tick growth at +10
-	// (firmware) softened the impulse so the bot could absorb the
-	// step. Won the race. Here it's a_max · dt — same idea, scaled to
-	// our timestep instead of the firmware's main-loop rate.
-	convert_distance_to_speed(dist_err, min_speed, gains, dt) {
-		const { Kp_nav = 1.0, a_max = 1.5 } = gains;
-		let desired = Kp_nav * dist_err;
-		desired = Math.min(desired, this.desired_ticks_old + a_max * dt);
-		desired = Math.max(desired, min_speed);
-		this.desired_ticks_old = desired;
-		return desired;
+	// While-loops are cheap when the input is usually within ±36000;
+	// modulo'd version ((angle + 18000) % 36000 - 18000) is faster for
+	// arbitrary big inputs but uglier.
+	wrap_180(angle_cd) {
+		while (angle_cd >  18000) angle_cd -= 36000;
+		while (angle_cd < -18000) angle_cd += 36000;
+		return angle_cd;
 	}
 
-	// vel_command stayed in our telemetry schema across the refactor;
-	// expose it as the active speed setpoint regardless of mode so the
-	// plotter has something meaningful to draw.
+	// ──────────────────────────────────────────────────────────────────────
+	// convert_distance_to_encoder_speed  — firmware helper called from
+	// get_nav_pitch (navigation.pde:167)
+	// ──────────────────────────────────────────────────────────────────────
+	// Firmware mapped cm-of-distance → ticks/sec via wheel diameter and
+	// encoder ticks/rev. Here we work in SI units so it collapses to a
+	// single gain (Kp_nav, m/s per m of distance).
+	convert_distance_to_encoder_speed(dist_err, gains) {
+		return (gains.Kp_nav ?? 1.0) * dist_err;
+	}
+	
+	convert_distance_to_encoder_speed(_distance)
+	{
+		const WHEEL_DIAMETER_CM = 28.27;
+		const wheel_encoder_speed = 815
+		return (_distance * wheel_encoder_speed ) / WHEEL_DIAMETER_CM;
+	}
+	convert_groundspeed_to_encoder_speed(_ground_speed)
+	{
+		const WHEEL_DIAMETER_CM = 28.27;
+		const wheel_encoder_speed = 815
+		return (_ground_speed * wheel_encoder_speed ) / WHEEL_DIAMETER_CM;
+	}
+
+	convert_encoder_speed_to_ground_speed(encoder_speed)
+	{
+		const WHEEL_DIAMETER_CM = 28.27;
+		const wheel_encoder_speed = 815
+		return (encoder_speed * WHEEL_DIAMETER_CM) / wheel_encoder_speed;
+	}
+
+	// vel_command stayed in our telemetry schema across the refactor.
+	// Returns the active speed setpoint at controller scope (cruise_speed
+	// in FBW; 0 elsewhere — AUTO's desired_ticks is now a function-local).
 	get vel_command() {
-		if (this.roll_pitch_mode === ROLL_PITCH_AUTO) return this.desired_ticks;
-		if (this.roll_pitch_mode === ROLL_PITCH_FBW)  return this.cruise_speed;
-		return 0;
+		return this.roll_pitch_mode === ROLL_PITCH_FBW ? this.cruise_speed : 0;
 	}
 }

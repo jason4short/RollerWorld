@@ -174,7 +174,7 @@ get_nav_pitch(int16_t speed, int16_t dist_err)
 	// grab the wheel speed error
 	wheel_speed_error 	= wheel.speed - desired_ticks;
 
-    ff_out          = (float)desired_ticks * g.throttle; // allows us to roll while vertical
+    ff_out          = (float)desired_ticks * g.throttle; // allows us to roll while vertical 0.03333
 	nav_out      	= g.pid_nav.get_pid(wheel_speed_error, G_Dt);
 
     return constrain((nav_out - ff_out), -2000, 2000);
@@ -187,38 +187,7 @@ static int16_t get_dist_err()
     return constrain(dist_err, 0, 45);
 }
 
-static int16_t get_desired_speed(int16_t max_speed)
-{
-    /*
-    Based on Equation by Bill Premerlani & Robert Lefebvre
-    	(sq(V2)-sq(V1))/2 = A(X2-X1)
-        derives to:
-        V1 = sqrt(sq(V2) - 2*A*(X2-X1))
-     */
 
-    if(ap.fast_corner) {
-        // don't slow down
-    }else{
-        if(wp_distance < 20000){ // limit the size of numbers we're dealing with to avoid overflow
-            // go slower
-    	 	int32_t temp 	= 2 * 100 * (int32_t)(wp_distance - g.waypoint_radius * 100);
-    	 	int32_t s_min 	= WAYPOINT_SPEED_MIN;
-    	 	temp 			+= s_min * s_min;
-    		max_speed 		= sqrt((float)temp);
-            max_speed 		= min(max_speed, g.waypoint_speed_max);
-        }
-    }
-
-    max_speed 		= min(max_speed, max_speed_old + (100 * dTnav));// limit going faster
-    max_speed 		= max(max_speed, WAYPOINT_SPEED_MIN); 	// don't go too slow
-    max_speed_old 	= max_speed;
-    return max_speed;
-}
-
-static void reset_desired_speed()
-{
-    max_speed_old = 0;
-}
 
 static void update_crosstrack(void)
 {

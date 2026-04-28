@@ -8,7 +8,7 @@
 // so trainers can filter:
 //
 //   kind: 'ardubalance'      legacy whole-stack distillation
-//     inputs: [pitch, pitch_rate, vel_cart, vel_cart_prev, vel_cart_target]
+//     inputs: [pitch, pitch_rate, vel_bot, vel_bot_prev, vel_bot_target]
 //     output: pwm
 //
 //   kind: 'cascade_mixer'    distill the Mixer's velocity → tilt step
@@ -27,24 +27,24 @@ export class Recorder {
 	constructor() {
 		this.data          = [];
 		this.recording     = false;
-		this.vel_cart_prev = 0;   // tracks last sample's vel_cart so we can record it next tick
+		this.vel_bot_prev = 0;   // tracks last sample's vel_bot so we can record it next tick
 	}
 
-	start()  { this.data.length = 0; this.recording = true; this.vel_cart_prev = 0; }
+	start()  { this.data.length = 0; this.recording = true; this.vel_bot_prev = 0; }
 	stop()   { this.recording = false; }
 	clear()  { this.data.length = 0; }
 	size()   { return this.data.length; }
 	count(kind) { return this.data.reduce((n, d) => n + (d.kind === kind ? 1 : 0), 0); }
 
 	// ArduBalance whole-stack: sensor state → PWM.
-	record({ pitch, pitch_rate, vel_cart, vel_cart_target, pwm }) {
+	record({ pitch, pitch_rate, vel_bot, vel_bot_target, pwm }) {
 		if (!this.recording) return;
 		this.data.push({
 			kind: 'ardubalance',
-			inputs: [pitch, pitch_rate, vel_cart, this.vel_cart_prev, vel_cart_target],
+			inputs: [pitch, pitch_rate, vel_bot, this.vel_bot_prev, vel_bot_target],
 			output: pwm,
 		});
-		this.vel_cart_prev = vel_cart;
+		this.vel_bot_prev = vel_bot;
 	}
 
 	// Cascade Mixer: velocity error → tilt command.

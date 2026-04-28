@@ -196,7 +196,7 @@ export class Rollerbot {
 		const cs = Math.cos(state.pitch);
 		const sn = Math.sin(state.pitch);
 		const x_CoM_true = state.x + params.L * sn;
-		const v_CoM_true = state.vel_cart + params.L * cs * state.pitch_rate;
+		const v_CoM_true = state.vel_bot + params.L * cs * state.pitch_rate;
 
 		const tm = this.telemetry();
 		history.push({
@@ -204,7 +204,7 @@ export class Rollerbot {
 			pitch:			state.pitch,
 			pitch_rate:		state.pitch_rate,
 			x:				state.x,
-			vel_cart:		state.vel_cart,
+			vel_bot:		state.vel_bot,
 			x_CoM:			x_CoM_true,
 			v_CoM:			v_CoM_true,
 			F:				tm.force,
@@ -311,34 +311,52 @@ export class Rollerbot {
 		const drivetrain		= this.ui.readDrivetrain();
 
 		const wheelOut			= controller.fastLoop(measured, gains, dt, motor);
+//		console.log(wheelOut)
 
 		// Two paths to the plant:
 		//   - Default (Cascade, PitchHold, NN): wheelOut has per-wheel
 		//     torque commands. motor.applyTorque runs FF + force-tracking
 		//     PI to derive PWMs that hit those torques.
-		//   - ArduBalance: wheelOut also includes pwm_left/pwm_right —
-		//     the firmware already computed final motor PWMs in
-		//     update_servos. Skip applyTorque so the firmware codepath
-		//     reaches the plant unchanged; just sum the per-wheel forces.
+		//   - ArduBalance: wheelOut has per-wheel PWMs only — the firmware
+		//     wrote final motor PWMs in update_servos and stops there.
+		//     We simulate the motor here (PWM → force per wheel via the
+		//     model), since that's the physical world's job in the
+		//     firmware. Bypasses applyTorque's inverse-model PI entirely.
 		let applied;
-		
+		let torque_left, torque_right;
+
 		if (wheelOut.pwm_left !== undefined && wheelOut.pwm_right !== undefined) {
+			// ArduBalance writes RAW motor channel PWMs. On real hardware
+			// the right motor is mounted mirrored from the left, so:
+			//   - same PWM sign → wheels rotate in opposite chassis-frame
+			//     directions → bot spins
+			//   - opposite PWM signs → wheels both push forward → bot drives
+			// We reproduce that by flipping the right wheel's contribution
+			// to chassis force (and the velocity it sees for back-EMF) so
+			// "raw motor channel" semantics survive the trip into our
+			// chassis-frame physics.
 			const wb   = drivetrain.wheelbase ?? motor.wheelbase;
 			const half = wb / 2;
+			const v_left  = measured.vel_bot - measured.yaw_rate * half;
+			const v_right = measured.vel_bot + measured.yaw_rate * half;
+			torque_left  =  motor.forceFromPWM(wheelOut.pwm_left,   v_left);
+			torque_right = -motor.forceFromPWM(wheelOut.pwm_right, -v_right);
 			applied = {
-				force:      wheelOut.torque_left + wheelOut.torque_right,
-				yaw_torque: (wheelOut.torque_right - wheelOut.torque_left) * half,
+				force:      torque_left + torque_right,
+				yaw_torque: (torque_right - torque_left) * half,
 				pwm_left:   wheelOut.pwm_left,
 				pwm_right:  wheelOut.pwm_right,
 			};
 		} else {
 			applied = motor.applyTorque(wheelOut, measured, dt, drivetrain);
+			torque_left  = wheelOut.torque_left;
+			torque_right = wheelOut.torque_right;
 		}
 
 		this.lastForce      	= applied.force;
 		this.lastYawTorque  	= applied.yaw_torque;
-		this.lastTorqueLeft 	= wheelOut.torque_left;
-		this.lastTorqueRight	= wheelOut.torque_right;
+		this.lastTorqueLeft 	= torque_left;
+		this.lastTorqueRight	= torque_right;
 		this.lastPwmLeft    	= applied.pwm_left;
 		this.lastPwmRight   	= applied.pwm_right;
 
@@ -348,7 +366,7 @@ export class Rollerbot {
 		// say alongside the active controller. Skip when NN is the
 		// active controller (it already ran).
 		if (this.controllers.nn.mlp && controller !== this.controllers.nn) {
-			this.controllers.nn.vel_cart_target 	= this._command.navVelDesired ?? 0;
+			this.controllers.nn.vel_bot_target 	= this._command.navVelDesired ?? 0;
 			
 			this.controllers.nn.fastLoop(measured, this.currentGainsFor('nn'), dt, motor);
 		}
@@ -383,8 +401,17 @@ export class Rollerbot {
 		const stack      = this.stack;
 		const ardu       = this.controllers.ardubalance;
 
-		const force_fwd = isCascade ? (stack.attitude.lastForceFwd  ?? 0) : (ctrl.lastForceFwd  ?? 0);
-		const torque_yaw = isCascade ? (stack.attitude.lastTorqueYaw ?? 0) : (ctrl.lastTorqueYaw ?? 0);
+		// Cascade exposes Attitude's chassis-level intent (pre-mix);
+		// PitchHold and NN store their own intent in lastForceFwd/Yaw;
+		// ArduBalance no longer stores either (firmware doesn't have a
+		// chassis-force concept), so fall back to the realized chassis
+		// quantities the bot just integrated.
+		const force_fwd  = isCascade
+			? (stack.attitude.lastForceFwd  ?? 0)
+			: (ctrl.lastForceFwd  ?? this.lastForce);
+		const torque_yaw = isCascade
+			? (stack.attitude.lastTorqueYaw ?? 0)
+			: (ctrl.lastTorqueYaw ?? this.lastYawTorque);
 
 		// Scalar PWM trace = larger-magnitude wheel.
 		const activePwm = Math.abs(this.lastPwmLeft) > Math.abs(this.lastPwmRight)
@@ -443,8 +470,8 @@ export class Rollerbot {
 			this.recorder.record({
 				pitch:           measured.pitch,
 				pitch_rate:      measured.pitch_rate,
-				vel_cart:        measured.vel_cart,
-				vel_cart_target: command.navVelDesired,
+				vel_bot:        measured.vel_bot,
+				vel_bot_target: command.navVelDesired,
 				pwm:             controller.lastPWM ?? 0,
 			});
 		}

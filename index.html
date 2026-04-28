@@ -306,9 +306,9 @@
 
   <details class="panel" data-tab="control" data-ctrl="ardubalance" open>
     <summary>ArduBalance — outer loop</summary>
-    <label>bal_P  (m/s per rad)   <input type="number" id="bal_P" value="120" step="5"></label>
-    <label>bal_D  (m/s per rad/s) <input type="number" id="bal_D" value="1.0" step="0.1"></label>
-    <label>bal_I  (auto-trim)     <input type="number" id="bal_I" value="0" step="0.01"></label>
+    <label>bal_P  (PWM per cd)     <input type="number" id="bal_P" value="18"  step="0.5"></label>
+    <label>bal_D  (PWM per cd/s)   <input type="number" id="bal_D" value="0.2" step="0.05"></label>
+    <label>bal_I  (cd per cd·s)    <input type="number" id="bal_I" value="0" step="0.001"></label>
     <label>p_vel  (speed fb)      <input type="number" id="p_vel" value="1.2" step="0.05"></label>
   </details>
 
@@ -327,7 +327,7 @@
       Used by ArduBalance, PID, and the legacy whole-stack NN. Cascade replaces
       this with Attitude's yaw (above).
     </p>
-    <label>Heading Kp (rad/s per rad) <input type="number" id="Kheading"  value="2" step="0.2"></label>
+    <label>Heading Kp (PWM per cd)   <input type="number" id="Kheading"  value="0.1" step="0.01"></label>
     <label>Kyaw (N·m per rad/s)       <input type="number" id="Kyaw"      value="4" step="0.5"></label>
     <label>Max yaw torque (N·m)       <input type="number" id="MaxTauYaw" value="6" step="0.5"></label>
   </details>

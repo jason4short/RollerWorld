@@ -57,7 +57,7 @@ export const PLOT_SIGNALS = {
 	pitch:      { label: 'Tilt angle (±60°)',        scale: 1 / (Math.PI / 3) },
 	pitch_rate: { label: 'Tilt rate (±6 rad/s)',     scale: 1 / 6 },
 	x:          { label: 'Cart position (±2 m)',     scale: 1 / 2 },
-	vel_cart:     { label: 'Wheel/cart velocity (±3 m/s)', scale: 1 / 3 },
+	vel_bot:     { label: 'Wheel/cart velocity (±3 m/s)', scale: 1 / 3 },
 	v_CoM:        { label: 'Body (CoM) velocity (±3 m/s)', scale: 1 / 3 },
 	x_CoM:        { label: 'Body (CoM) position (±2 m)',   scale: 1 / 2 },
 	F:            { label: 'Force on cart (±Fmax)',        scale: null },   // filled in at render time

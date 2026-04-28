@@ -75,7 +75,7 @@ export class Sim {
 		const SPAWN_X = -45, SPAWN_Z = -5;
 		const SPAWN_HEADING = Math.atan2(-(-15 - -5), (-15 - -45));   // ≈ 0.32 rad
 		this.pendulum.setState({
-			x: SPAWN_X, z: SPAWN_Z, vel_cart: 0,
+			x: SPAWN_X, z: SPAWN_Z, vel_bot: 0,
 			pitch: initialPitch, pitch_rate: 0,
 			heading: SPAWN_HEADING, yaw_rate: 0,
 		});
@@ -132,7 +132,7 @@ export class Sim {
 	pushChassis(impulse) {
 		const total_mass = this.pendulum.params.M + this.pendulum.params.m;
 		const dv = impulse / total_mass;
-		this.pendulum.state.vel_cart += dv;
+		this.pendulum.state.vel_bot += dv;
 		return dv;
 	}
 

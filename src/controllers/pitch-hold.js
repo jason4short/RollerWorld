@@ -60,7 +60,7 @@ export class PitchHoldController {
 		// error.
 		const x_pos = sensors.x_body ?? sensors.x;
 		let force_fwd = (Kp * pitch_err + Kd * sensors.pitch_rate + Ki * this.pitch_integral)
-		              + (Kx * x_pos     + Kv * sensors.vel_cart);
+		              + (Kx * x_pos     + Kv * sensors.vel_bot);
 		if (force_fwd >  Fmax) force_fwd =  Fmax;
 		if (force_fwd < -Fmax) force_fwd = -Fmax;
 

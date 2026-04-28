@@ -52,7 +52,7 @@ export class NavController {
 		// shaping below.
 		const time_constant = 0.1;
 		const alpha         = dt / (time_constant + dt);
-		this.vel_lpf        = (1 - alpha) * this.vel_lpf + alpha * sensors.vel_cart;
+		this.vel_lpf        = (1 - alpha) * this.vel_lpf + alpha * sensors.vel_bot;
 
 		// World-frame error to target.
 		const dx = this.target_x - sensors.x;

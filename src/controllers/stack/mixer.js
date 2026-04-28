@@ -68,7 +68,7 @@ export class NavMixer {
 	}
 
 	// navOut:  { vel_target_body, heading_target }
-	// sensors: { vel_cart, heading, ... }
+	// sensors: { vel_bot, heading, ... }
 	// gains:   { Kvel, tiltLimit, a_max, vel_lpf_tc }
 	update(navOut, sensors, gains, dt) {
 		this._smoothVelocityFeedback(sensors, gains, dt);
@@ -88,7 +88,7 @@ export class NavMixer {
 	_smoothVelocityFeedback(sensors, gains, dt) {
 		const tc    = gains.vel_lpf_tc ?? 0.1;
 		const alpha = dt / (tc + dt);
-		this.vel_lpf = (1 - alpha) * this.vel_lpf + alpha * sensors.vel_cart;
+		this.vel_lpf = (1 - alpha) * this.vel_lpf + alpha * sensors.vel_bot;
 	}
 
 	_slewVelocitySetpoint(vel_in, gains, dt) {

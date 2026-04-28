@@ -1299,16 +1299,6 @@ void update_roll_pitch_mode(void)
             nav_out = get_nav_pitch(0, get_dist_err());
 
             pitch_speed = (bal_out + vel_out + nav_out);
-
-           	/*cliSerial->printf_P(PSTR("a:%d\td:%d\tbal%d, vel%d, nav%d\n"),
-           	        (int16_t)ahrs.pitch_sensor,
-                   	(int16_t)wp_distance,
-                   	bal_out,
-                   	vel_out,
-                   	nav_out);*/
-
-
-
             break;
 
         case ROLL_PITCH_FBW:
@@ -1339,16 +1329,6 @@ void update_roll_pitch_mode(void)
             vel_out         = get_velocity_pitch();                             // magic
             ff_out          = (float)desired_speed * g.throttle;                // allows us to roll while vertical
             nav_out      	= g.pid_nav.get_pid(speed_error, G_Dt);             // allows us to accelerate
-
-            cliSerial->printf_P(PSTR("%d, %d, %d, %d, %d, %d, %d, %d\n"),
-                (int16_t)ahrs.pitch_sensor,
-                (int16_t)balance_offset,
-                bal_out,
-                vel_out,
-                ff_out,
-                nav_out,
-                desired_speed,
-                speed_error);//*/
 
             // sum the output
             pitch_speed = (bal_out + vel_out + nav_out - ff_out);

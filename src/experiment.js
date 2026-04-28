@@ -10,7 +10,7 @@ export class ExperimentRunner {
 
 	runTrial(params, gains, { th0 = 6, duration = 10, noise = 0 } = {}) {
 		const plant = new Pendulum(params);
-		plant.setState({ x: 0, vel_cart: 0, pitch: th0 * Math.PI / 180, pitch_rate: 0 });
+		plant.setState({ x: 0, vel_bot: 0, pitch: th0 * Math.PI / 180, pitch_rate: 0 });
 		const pid = new PitchHoldController();
 		// Headless trial — no actuator model, no yaw. fastLoop returns
 		// per-wheel torque; we just sum to recover the chassis force.

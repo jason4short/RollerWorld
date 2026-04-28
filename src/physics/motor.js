@@ -80,7 +80,7 @@ export class Motor {
 	//   torque_left, torque_right   — per-wheel actuator commands (N at
 	//                                 the contact patch; treat as wheel
 	//                                 torque divided by wheel radius)
-	//   sensors  { vel_cart, yaw_rate }  — body frame
+	//   sensors  { vel_bot, yaw_rate }  — body frame
 	//   dt                          — seconds since last applyTorque call
 	//   gains    { wheelbase, force_P, force_I, force_I_max,
 	//              deadband_extra, PWM_max }
@@ -92,8 +92,8 @@ export class Motor {
 	applyTorque({ torque_left, torque_right }, sensors, dt, gains) {
 		const wb      = gains.wheelbase ?? this.wheelbase;
 		const half_wb = wb / 2;
-		const v_left  = sensors.vel_cart - sensors.yaw_rate * half_wb;
-		const v_right = sensors.vel_cart + sensors.yaw_rate * half_wb;
+		const v_left  = sensors.vel_bot - sensors.yaw_rate * half_wb;
+		const v_right = sensors.vel_bot + sensors.yaw_rate * half_wb;
 
 		const pwm_left  = this._wheelLoop(this.left,  torque_left,  v_left,  gains, dt);
 		const pwm_right = this._wheelLoop(this.right, torque_right, v_right, gains, dt);

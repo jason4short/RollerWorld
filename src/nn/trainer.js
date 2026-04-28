@@ -4,16 +4,16 @@ import { NavMixer } from '../controllers/stack/mixer.js';
 
 // Supervised-learning trainer.
 //
-// The NN takes (pitch, pitch_rate, vel_cart, vel_cart_prev, vel_cart_target)
+// The NN takes (pitch, pitch_rate, vel_bot, vel_bot_prev, vel_bot_target)
 // and outputs PWM. The teacher is the combined pipeline of nav's velocity-
 // tracking step and the full ArduBalance cascade:
 //
-//     tilt = clamp(Kvel * (vel_cart_target - vel_cart), ±tiltLimit)
+//     tilt = clamp(Kvel * (vel_bot_target - vel_bot), ±tiltLimit)
 //     ab.target_angle = tilt
 //     pwm = ab.updateVelocity + ab.produceForce
 //
 // Crucially, we initialize ArduBalance's inner-loop D-term state from the
-// implied cart acceleration (vel_cart - vel_cart_prev)/dt so the NN sees
+// implied cart acceleration (vel_bot - vel_bot_prev)/dt so the NN sees
 // meaningful wheel-D damping in its training targets. Without this the
 // NN learns a controller with no linear damping and rocks on the wheel axis.
 //
@@ -27,21 +27,21 @@ import { NavMixer } from '../controllers/stack/mixer.js';
 export class NNTrainer {
 	constructor() {
 		// Input normalization — divide by expected max, bringing values to ±1.
-		//          pitch,             pitch_rate,  vel_cart, vel_cart_prev, vel_cart_target
+		//          pitch,             pitch_rate,  vel_bot, vel_bot_prev, vel_bot_target
 		this.inScale  = [1 / (Math.PI / 3), 1 / 10, 1 / 3,    1 / 3,         1 / 3];
 		this.outScale = 1 / 2000;   // normalize PWM to ±1
 	}
 
-	// Build sample ranges from current nav gains. vel_cart_target is bounded
+	// Build sample ranges from current nav gains. vel_bot_target is bounded
 	// by nav.v_max so the NN trains over the full commandable envelope.
 	_ranges(navGains) {
 		const v_max = navGains?.v_max ?? 3;
 		return {
 			pitch:           [-Math.PI / 3, Math.PI / 3],   // ±60°
 			pitch_rate:      [-10, 10],                     // ±10 rad/s
-			vel_cart:        [-3, 3],                       // ±3 m/s (encoder envelope)
-			vel_cart_prev:   [-3, 3],                       // sampled independently
-			vel_cart_target: [-v_max, v_max],
+			vel_bot:        [-3, 3],                       // ±3 m/s (encoder envelope)
+			vel_bot_prev:   [-3, 3],                       // sampled independently
+			vel_bot_target: [-v_max, v_max],
 		};
 	}
 
@@ -51,7 +51,7 @@ export class NNTrainer {
 		const Kvel      = navGains?.Kvel      ?? 0.4;
 		const tiltLimit = navGains?.tiltLimit ?? Math.PI / 6;
 
-		let tilt = Kvel * (state.vel_cart_target - state.vel_cart);
+		let tilt = Kvel * (state.vel_bot_target - state.vel_bot);
 		if (tilt >  tiltLimit) tilt =  tiltLimit;
 		if (tilt < -tiltLimit) tilt = -tiltLimit;
 
@@ -61,14 +61,14 @@ export class NNTrainer {
 		// teacher's wheel_D term contributes meaningfully. ArduBalance computes
 		// raw_d = -(v - last_vmeas)/dt, and uses the LPF'd version. Settle the
 		// LPF at raw_d so steady-state response is captured in one call.
-		ab.last_vel_cart_meas = state.vel_cart_prev;
-		const raw_d    = -(state.vel_cart - state.vel_cart_prev) / dt;
+		ab.last_vel_bot_meas = state.vel_bot_prev;
+		const raw_d    = -(state.vel_bot - state.vel_bot_prev) / dt;
 		ab.speed_d_lpf = raw_d;
 
 		const sensors = {
 			pitch:      state.pitch,
 			pitch_rate: state.pitch_rate,
-			vel_cart:   state.vel_cart,
+			vel_bot:   state.vel_bot,
 		};
 		ab.updateVelocity(sensors, gains, dt);
 		ab.produceForce(sensors, gains, dt, motor);
@@ -85,17 +85,17 @@ export class NNTrainer {
 			const state = {
 				pitch:           r(...ranges.pitch),
 				pitch_rate:      r(...ranges.pitch_rate),
-				vel_cart:        r(...ranges.vel_cart),
-				vel_cart_prev:   r(...ranges.vel_cart_prev),
-				vel_cart_target: r(...ranges.vel_cart_target),
+				vel_bot:        r(...ranges.vel_bot),
+				vel_bot_prev:   r(...ranges.vel_bot_prev),
+				vel_bot_target: r(...ranges.vel_bot_target),
 			};
 			const pwm = this.queryTeacher(state, gains, navGains, motor, dt);
 			const row = new Float64Array(5);
 			row[0] = state.pitch           * this.inScale[0];
 			row[1] = state.pitch_rate      * this.inScale[1];
-			row[2] = state.vel_cart        * this.inScale[2];
-			row[3] = state.vel_cart_prev   * this.inScale[3];
-			row[4] = state.vel_cart_target * this.inScale[4];
+			row[2] = state.vel_bot        * this.inScale[2];
+			row[3] = state.vel_bot_prev   * this.inScale[3];
+			row[4] = state.vel_bot_target * this.inScale[4];
 			inputs[i]  = row;
 			targets[i] = [pwm * this.outScale];
 		}
