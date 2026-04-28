@@ -4,7 +4,7 @@
 //   nav     → { vel_target_body, heading_target }
 //   mixer   → { pitch_target, yaw_target }
 //   attitude → { force_fwd, torque_yaw }
-//   wheels  → { pwm_left, pwm_right, force_fwd_actual, torque_yaw_actual }
+//   wheels  → { torque_left, torque_right }                               (motor module owns PWM)
 //
 // Rate hierarchy
 // --------------
@@ -51,12 +51,16 @@ export class ControllerStack {
 		this.safety  	 = new Safety();
 		this.setRates(rates);
 
+		// Pilot-supplied command (mode + stick / pitch_target / etc.). Set
+		// by Rollerbot via applyCommand each frame; consumed by the inner
+		// loop. Default mode keeps the stack idle on first tick.
+		this._command = { mode: 'auto' };
+
 		// Last output of each layer (zero-order hold between firings).
 		this.navOut   = { vel_target_body: 0, heading_target: 0 };
 		this.mixerOut = { pitch_target: 0,    yaw_target: 0 };
 		this.attOut   = { force_fwd: 0,       torque_yaw: 0 };
-		this.wheelOut = { pwm_left: 0, pwm_right: 0, F_left: 0, F_right: 0,
-		                  force_fwd_actual: 0, torque_yaw_actual: 0 };
+		this.wheelOut = { torque_left: 0, torque_right: 0 };
 
 		// Time-since-last-firing per layer (s). When ≥ the layer's period,
 		// the layer fires and the accumulator resets.
@@ -80,12 +84,34 @@ export class ControllerStack {
 		this.tNav = 0; this.tMixer = 0; this.tAttitude = 0; this.tWheels = 0;
 	}
 
+	// Uniform controller surface — Rollerbot calls these for every
+	// controller, cascade included. setAttitude maps to 'tilt' mode;
+	// setCascadeCommand keeps the existing mode/stick path until Pilot
+	// is rewritten to emit Intents directly (CP4/5).
+	setAttitude(tilt, yawRate) {
+		this._command = {
+			mode:            'tilt',
+			pitch_target:    tilt    ?? 0,
+			yaw_target:      yawRate ?? 0,   // raw key-yaw uses heading; fbw uses rate
+			heading_rate_ff: yawRate ?? 0,
+		};
+	}
+
+	setCascadeCommand(command) { this._command = command; }
+
+	outerUpdate() { /* internal scheduling owns the slow layers */ }
+
+	innerUpdate(sensors, gains, dt, motor) {
+		const out = this.update(sensors, this._command, gains, motor, dt);
+		return out.wheelOut;   // { torque_left, torque_right }
+	}
+
 	// Caller ticks this at the wheels rate. Slower layers fire when their
 	// period has elapsed; everyone else sees the cached output above.
-	
+	//
 	// command: { mode: 'auto' | 'fbw' | 'tilt', stick?, pitch_target?, yaw_target? }
 	// gains:   { nav, mixer, attitude, wheels }  (one bag per layer)
-	update(sensors, command, gains, motor, dt) 
+	update(sensors, command, gains, motor, dt)
 	{
 		this.tNav += dt; this.tMixer += dt; this.tAttitude += dt; this.tWheels += dt;
 
@@ -125,7 +151,7 @@ export class ControllerStack {
 			this.tAttitude = 0;
 		}
 		if (this.tWheels >= this.dtWheels) {
-			this.wheelOut = this.wheels.update(this.attOut, sensors, gains.wheels, this.tWheels, motor);
+			this.wheelOut = this.wheels.update(this.attOut, sensors, gains.wheels);
 			this.tWheels = 0;
 		}
 

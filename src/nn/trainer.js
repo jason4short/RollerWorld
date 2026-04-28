@@ -1,7 +1,6 @@
 import { ArduBalanceController } from '../controllers/ardubalance.js';
 import { Attitude } from '../controllers/stack/attitude.js';
 import { NavMixer } from '../controllers/stack/mixer.js';
-import { Wheels   } from '../controllers/stack/wheels.js';
 import { Nav      } from '../controllers/stack/nav.js';
 
 // Supervised-learning trainer.
@@ -180,78 +179,6 @@ export class NNTrainer {
 
 		for (let e = 0; e < epochs; e++) {
 			const batch = recorded ?? this.generateNavBatch(samplesPerEpoch, navGains);
-			const loss  = mlp.trainEpoch(batch.inputs, batch.targets, lr, momentum);
-			losses.push(loss);
-			if (onProgress && (e % 5 === 0 || e === epochs - 1)) {
-				onProgress(e, loss);
-				await new Promise(r => setTimeout(r, 0));
-			}
-		}
-		return losses;
-	}
-
-	// ── Wheels distillation ───────────────────────────────────────────────
-	// 4 inputs (force_fwd, torque_yaw, vel_cart, yaw_rate), 2 outputs
-	// (pwm_left, pwm_right). Teacher is the steady-state FF math —
-	// differential mix + inverse motor model + deadband + saturation.
-	// The rule branch's per-wheel PI integrator is NOT in the teacher
-	// (a feed-forward MLP can't reproduce stateful behavior). That's
-	// the lesson: stateless NN approximates the steady-state controller;
-	// transient correction is left to whatever sits in front of it.
-
-	generateWheelsBatch(n, wheelGains, motor) {
-		const inScale  = Wheels.WHEELS_INPUT_SCALES;
-		const outScale = 1 / Wheels.WHEELS_OUTPUT_SCALE;
-		const r = (lo, hi) => lo + Math.random() * (hi - lo);
-
-		const inputs  = new Array(n);
-		const targets = new Array(n);
-		for (let i = 0; i < n; i++) {
-			const force_fwd  = r(-60, 60);
-			const torque_yaw = r(-2,  2);
-			const vel_cart   = r(-3,  3);
-			const yaw_rate   = r(-10, 10);
-			const { pwm_left, pwm_right } = Wheels.computeWheelsRule(
-				{ force_fwd, torque_yaw, vel_cart, yaw_rate }, wheelGains, motor,
-			);
-			const row = new Float64Array(4);
-			row[0] = force_fwd  * inScale[0];
-			row[1] = torque_yaw * inScale[1];
-			row[2] = vel_cart   * inScale[2];
-			row[3] = yaw_rate   * inScale[3];
-			inputs[i]  = row;
-			targets[i] = [pwm_left * outScale, pwm_right * outScale];
-		}
-		return { inputs, targets };
-	}
-
-	prepareWheelsRecorded(data) {
-		const inScale  = Wheels.WHEELS_INPUT_SCALES;
-		const outScale = 1 / Wheels.WHEELS_OUTPUT_SCALE;
-		const rows = data.filter(d => d.kind === 'cascade_wheels');
-		const inputs  = new Array(rows.length);
-		const targets = new Array(rows.length);
-		for (let i = 0; i < rows.length; i++) {
-			const r = rows[i];
-			const row = new Float64Array(4);
-			row[0] = r.force_fwd  * inScale[0];
-			row[1] = r.torque_yaw * inScale[1];
-			row[2] = r.vel_cart   * inScale[2];
-			row[3] = r.yaw_rate   * inScale[3];
-			inputs[i]  = row;
-			targets[i] = [r.pwm_left * outScale, r.pwm_right * outScale];
-		}
-		return { inputs, targets };
-	}
-
-	async trainWheels({ mlp, wheelGains, motor, mode = 'random', data = null,
-	                    epochs = 1000, samplesPerEpoch = 1000,
-	                    lr = 0.02, momentum = 0.9, onProgress }) {
-		const losses = [];
-		const recorded = mode === 'recorded' ? this.prepareWheelsRecorded(data) : null;
-
-		for (let e = 0; e < epochs; e++) {
-			const batch = recorded ?? this.generateWheelsBatch(samplesPerEpoch, wheelGains, motor);
 			const loss  = mlp.trainEpoch(batch.inputs, batch.targets, lr, momentum);
 			losses.push(loss);
 			if (onProgress && (e % 5 === 0 || e === epochs - 1)) {

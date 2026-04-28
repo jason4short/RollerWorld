@@ -53,10 +53,25 @@ export class UI {
 
   readMotor() {
     return {
-      Km:       this.num('Km'),
-      Kv:       this.num('Kv_motor'),
-      PWM_max:  this.num('PWM_max'),
-      deadband: this.num('deadband'),
+      Km:        this.num('Km'),
+      Kv:        this.num('Kv_motor'),
+      PWM_max:   this.num('PWM_max'),
+      deadband:  this.num('deadband'),
+      wheelbase: this.num('wheelbase'),
+    };
+  }
+
+  // Drivetrain tuning consumed by motor.applyTorque (force-tracking PI,
+  // deadband-jump compensation). Shared by every controller that emits
+  // per-wheel torque — they all dispatch through the same motor stack.
+  readDrivetrain() {
+    return {
+      wheelbase:      this.num('wheelbase'),
+      force_P:        this.num('force_P'),
+      force_I:        this.num('force_I'),
+      force_I_max:    this.num('force_I_max'),
+      deadband_extra: this.num('deadband_extra'),
+      PWM_max:        this.num('PWM_max'),
     };
   }
 

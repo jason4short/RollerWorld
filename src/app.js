@@ -550,19 +550,6 @@ export class App {
 			this.ui.log(this.simElapsedTime, `yaw: ${mode}`);
 		};
 
-		document.getElementById('btnTrainWheelsNN').onclick = () => this.training.trainWheelsNN();
-		document.getElementById('wheels_mode').onchange = e => {
-			const mode = e.target.value;
-			const mlp = this.training.wheelsMlp;
-			if (mode === 'nn' && !mlp) {
-				this.ui.log(this.simElapsedTime, 'no trained wheels NN yet — staying on rule');
-				e.target.value = 'rule';
-				return;
-			}
-			this.stack.wheels.setMode(mode, mlp);
-			this.ui.log(this.simElapsedTime, `wheels: ${mode}`);
-		};
-
 		document.getElementById('btnTrainNavNN').onclick = () => this.training.trainNavNN();
 
 		// Planner mode (Direct / A* ground truth / A* lidar map / Reactive).

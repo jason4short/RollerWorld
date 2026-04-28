@@ -74,15 +74,6 @@ export class Recorder {
 		});
 	}
 
-	// Cascade Wheels: chassis force/torque + state → per-wheel PWM.
-	recordCascadeWheels({ force_fwd, torque_yaw, vel_cart, yaw_rate, pwm_left, pwm_right }) {
-		if (!this.recording) return;
-		this.data.push({
-			kind: 'cascade_wheels',
-			force_fwd, torque_yaw, vel_cart, yaw_rate, pwm_left, pwm_right,
-		});
-	}
-
 	// Cascade Nav (auto): world error → vel_target + heading_err.
 	recordCascadeNav({ dx, dz, heading, vel_cart, vel_target_body, heading_err }) {
 		if (!this.recording) return;

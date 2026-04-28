@@ -125,17 +125,12 @@ export function pushHistory(history, sim, robot, pilot, command, params) {
 	const x_CoM_true = state.x + params.L * sn;
 	const v_CoM_true = state.vel_cart + params.L * cs * state.pitch_rate;
 
-	// "Motor PWM" = whatever the active controller just commanded.
-	// Cascade has two motors — report the larger-magnitude one for a
-	// scalar trace; per-wheel PWMs are also exposed below.
-	const stackOut = robot._lastStackOut?.wheelOut;
-	const cascadePwm = stackOut
-		? (Math.abs(stackOut.pwm_left) > Math.abs(stackOut.pwm_right) ? stackOut.pwm_left : stackOut.pwm_right)
-		: 0;
+	// "Motor PWM" = whatever the motor actually drove. Larger-magnitude
+	// wheel reported as the scalar trace; per-wheel PWMs are exposed below.
 	const isCascade = robot.isCascade();
-	const activePwm = isCascade
-		? cascadePwm
-		: (robot.controllers[robot.controllerType]?.lastPWM ?? 0);
+	const activePwm = Math.abs(robot.lastPwmLeft) > Math.abs(robot.lastPwmRight)
+		? robot.lastPwmLeft
+		: robot.lastPwmRight;
 
 	history.push({
 		t:				sim.simElapsedTime,
@@ -159,8 +154,8 @@ export function pushHistory(history, sim, robot, pilot, command, params) {
 		pitch_target:	robot.stack.mixer.pitch_target ?? 0,
 		force_fwd:		robot.stack.attitude.lastForceFwd ?? 0,
 		torque_yaw:		robot.stack.attitude.lastTorqueYaw ?? 0,
-		pwm_left:		stackOut?.pwm_left  ?? 0,
-		pwm_right:		stackOut?.pwm_right ?? 0,
+		pwm_left:		robot.lastPwmLeft,
+		pwm_right:		robot.lastPwmRight,
 	});
 
 	if (history.length > 5000) history.shift();

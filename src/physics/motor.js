@@ -35,15 +35,20 @@ class WheelChannel {
 }
 
 export class Motor {
-	constructor({ Km = 60, Kv = 10, PWM_max = 2000, deadband = 80 } = {}) {
-		this.Km       = Km;
-		this.Kv       = Kv;
-		this.PWM_max  = PWM_max;
+	constructor({ Km = 60, Kv = 10, PWM_max = 2000, deadband = 80, wheelbase = 0.3 } = {}) {
+		this.Km        = Km;
+		this.Kv        = Kv;
+		this.PWM_max   = PWM_max;
 		// deadband (in PWM counts): drive-train friction + driver stiction
 		// means the cart doesn't move at all until |pwm| exceeds this.
 		// Real ArduRoller-class hardware had deadbands around 5–10% of
 		// PWM_max.
-		this.deadband = deadband;
+		this.deadband  = deadband;
+		// Distance between wheel contact patches (m). Lives on the motor
+		// because both the diff-mix (controllers → per-wheel torque) and
+		// the inverse-mix in applyTorque (per-wheel realized force →
+		// chassis yaw torque) need it.
+		this.wheelbase = wheelbase;
 
 		// Calibration table for single-channel feed-forward (used by
 		// ArduBalance's chassis-level inner loop). Linear until calibrated.
@@ -85,7 +90,8 @@ export class Motor {
 	//     pwm_left, pwm_right,      — for telemetry / NN training
 	//     F_left, F_right }         — commanded per-wheel forces
 	applyTorque({ torque_left, torque_right }, sensors, dt, gains) {
-		const half_wb = gains.wheelbase / 2;
+		const wb      = gains.wheelbase ?? this.wheelbase;
+		const half_wb = wb / 2;
 		const v_left  = sensors.vel_cart - sensors.yaw_rate * half_wb;
 		const v_right = sensors.vel_cart + sensors.yaw_rate * half_wb;
 
@@ -96,7 +102,7 @@ export class Motor {
 		const fL = this.forceFromPWM(pwm_left,  v_left);
 		const fR = this.forceFromPWM(pwm_right, v_right);
 		const force      = fL + fR;
-		const yaw_torque = (fR - fL) * half_wb;
+		const yaw_torque = (fR - fL) * (wb / 2);
 
 		return {
 			force, yaw_torque,

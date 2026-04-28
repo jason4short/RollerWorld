@@ -12,11 +12,15 @@ export class ExperimentRunner {
     const plant = new Pendulum(params);
     plant.setState({ x: 0, vel_cart: 0, pitch: th0 * Math.PI / 180, pitch_rate: 0 });
     const pid = new PitchHoldController();
+    // Headless trial — no actuator model, no yaw. innerUpdate returns
+    // per-wheel torque; we just sum to recover the chassis force.
+    const motorStub = { wheelbase: 1 };
     let t = 0, fell = false, iae = 0;
     while (t < duration) {
       const s = plant.state;
       const measured = { ...s, pitch: s.pitch + (Math.random() * 2 - 1) * noise };
-      const F = pid.update(measured, gains, this.dt);
+      const { torque_left, torque_right } = pid.innerUpdate(measured, gains, this.dt, motorStub);
+      const F = torque_left + torque_right;
       plant.step(F, 0, this.dt);
       t += this.dt;
       iae += Math.abs(plant.state.pitch) * this.dt;

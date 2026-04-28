@@ -1,27 +1,33 @@
-// Rollerbot — the brain. Controllers (legacy + cascade), the yaw torque
-// branch, and the actuator output cache. Takes sensors + a command,
-// produces force and yaw torque.
+// Rollerbot — the brain. Holds four controllers behind a uniform
+// interface and dispatches per-frame commands to the active one.
 //
-// The teaching contrast lives here. Four controllers run from the
-// same I/O contract:
-//
-//   pid          — idealized baseline (no actuator model)
+//   pitch-hold   — single-loop PD-on-pitch (no actuator model)
 //   ardubalance  — the firmware Roller is modeled on (whole-stack reference)
 //   nn           — single MLP trained to imitate ArduBalance
 //   cascade      — modern layered: Nav → Mixer → Attitude → Wheels
 //
-// Rollerbot owns the recorder (App injects it at construction). Recording
-// happens inline inside updateInner — the data dictionary for each
-// recorded tuple is right next to the layer that produces it.
+// All four expose:
+//   c.setAttitude(tilt, yawRate)
+//   c.outerUpdate(sensors, gains, dt)            (no-op for single-rate)
+//   c.innerUpdate(sensors, gains, dt, motor)
+//                          → { torque_left, torque_right }
+//
+// Each controller owns its own pitch + yaw conversion to per-wheel
+// torque. The motor module then takes per-wheel torque, runs the
+// inverse-model FF + force-tracking PI + deadband + saturation, and
+// returns the chassis force / yaw torque the sim integrates.
+//
+// Rollerbot owns the recorder (App injects it). Recording happens
+// inline inside updateInner — the data dictionary for each recorded
+// tuple is right next to the layer that produces it.
 //
 // No scheduling here — Loop decides when updateOuter and updateInner
 // fire. No pilot input here either — Pilot decides what command to
-// send. Rollerbot just steps the controllers when asked.
+// send. Rollerbot just steps the active controller when asked.
 
 import { PitchHoldController }   from './controllers/pitch-hold.js';
 import { ArduBalanceController } from './controllers/ardubalance.js';
 import { NNController }          from './controllers/nn.js';
-import { YawController }         from './controllers/yaw.js';
 import { ControllerStack }       from './controllers/stack/index.js';
 
 export class Rollerbot {
@@ -33,20 +39,25 @@ export class Rollerbot {
 			pid:         new PitchHoldController(),   // 'pid' key kept for HTML/preset compat
 			ardubalance: new ArduBalanceController(),
 			nn:          new NNController(),
+			cascade:     new ControllerStack(),
 		};
 		this.controllerType = controllerType;   // 'pid' | 'ardubalance' | 'nn' | 'cascade'
 
-		this.yawController = new YawController();   // legacy yaw branch
-		this.stack         = new ControllerStack(); // modern cascade
+		// Convenient cascade alias — App still pokes at this.stack to
+		// install trained MLPs into specific layers.
+		this.stack = this.controllers.cascade;
 
 		// Last actuator outputs, held by ZOH between inner-loop firings
 		// so the integrator at 500 Hz has a steady force to apply while
 		// the inner loop is between updates.
-		this.lastForce     = 0;
-		this.lastYawTorque = 0;
-		this._lastStackOut = null;   // for between-firing plot panels
+		this.lastForce        = 0;
+		this.lastYawTorque    = 0;
+		this.lastTorqueLeft   = 0;
+		this.lastTorqueRight  = 0;
+		this.lastPwmLeft      = 0;
+		this.lastPwmRight     = 0;
 
-		// The current command, set by applyCommand() once per RAF requestAnimationFrame and
+		// The current command, set by applyCommand() once per RAF and
 		// read by updateOuter/updateInner each time they fire.
 		this._command = null;
 	}
@@ -55,46 +66,49 @@ export class Rollerbot {
 	currentController() { return this.controllers[this.controllerType]; }
 
 	// Active controller's gain bag. Cascade reads its own (per-layer)
-	// gains inside the stack; legacy controllers each take a single bag.
+	// gains; legacy controllers each take a single bag merged with yaw
+	// terms (Kyaw, MaxTauYaw) since each controller owns its yaw branch.
 	currentGains() {
-		if (this.controllerType === 'ardubalance') return this.ui.readArduGains();
-		if (this.controllerType === 'cascade')     return null;
-		return this.ui.readGains();
+		if (this.controllerType === 'cascade') return this.ui.readCascadeGains();
+		const yaw = this.ui.readYawGains();
+		const dt  = this.ui.readDrivetrain();
+		const wb  = { wheelbase: dt.wheelbase };
+		if (this.controllerType === 'ardubalance') return { ...this.ui.readArduGains(), ...yaw, ...wb };
+		return { ...this.ui.readGains(), ...yaw, ...wb };
 	}
 
 	reset() {
 		for (const c of Object.values(this.controllers)) c.reset();
-		this.stack.reset();
-		this.lastForce     = 0;
-		this.lastYawTorque = 0;
-		this._lastStackOut = null;
+		this.lastForce        = 0;
+		this.lastYawTorque    = 0;
+		this.lastTorqueLeft   = 0;
+		this.lastTorqueRight  = 0;
+		this.lastPwmLeft      = 0;
+		this.lastPwmRight     = 0;
 	}
 
-	// Pre-step setup. Pilot has decided what it wants; stash everything
-	// the controllers need before the inner loop fires. Called once per
-	// RAF, before the accumulator drains.
+	// Pre-step setup. Pilot has decided what it wants; stash the command
+	// and forward it to the active controller. Called once per RAF.
 	//
 	// command: {
-	//   tiltSetpoint, yawRateSetpoint,         // legacy scalars
+	//   tiltSetpoint, yawRateSetpoint,         — for legacy attitude paths
 	//   cascadeCommand: { mode, stick?, pitch_target?, ... },
-	//   navTarget:      { x, z },              // for cascade nav mirror & recording
-	//   navVelDesired,                          // for NN's vel_cart_target
+	//   navTarget:      { x, z },              — cascade nav mirror & recording
+	//   navVelDesired,                          — for NN's vel_cart_target
 	// }
 	applyCommand(command) {
 		this._command = command;
 		const controller = this.currentController();
 
 		if (this.isCascade()) {
-			// Single source of truth for the waypoint target — the
-			// cascade's internal Nav layer mirrors what Pilot decided.
 			this.stack.nav.target_x = command.navTarget.x;
 			this.stack.nav.target_z = command.navTarget.z;
-		} else if (controller instanceof ArduBalanceController) {
-			controller.target_angle = command.tiltSetpoint;
-		} else if (controller instanceof NNController) {
-			// NN swallows the velocity-tracking step; takes vel_cart_target
-			// (post-slew) directly from pilot rather than a tilt setpoint.
-			controller.vel_cart_target = command.navVelDesired;
+			this.stack.setCascadeCommand(command.cascadeCommand);
+		} else {
+			controller.setAttitude(command.tiltSetpoint, command.yawRateSetpoint);
+			if (controller instanceof NNController) {
+				controller.vel_cart_target = command.navVelDesired;
+			}
 		}
 	}
 
@@ -111,117 +125,103 @@ export class Rollerbot {
 		});
 	}
 
-	// Outer attitude loop — legacy controllers only. Cascade is single-
-	// rate at innerHz; its layered structure already separates the
-	// timescales conceptually.
+	// Slow loop — legacy controllers run their angle PD here. Cascade
+	// owns its own internal scheduling and ignores this hook.
 	updateOuter(measured, dt) {
 		if (this.isCascade()) return;
-		const controller = this.currentController();
-		const gains      = this.currentGains();
-		// PID biases its error by the tilt setpoint; ArduBalance reads
-		// target_angle which was set in applyCommand.
-		const measOuter = controller instanceof PitchHoldController
-			? { ...measured, pitch: measured.pitch - this._command.tiltSetpoint }
-			: measured;
-		controller.updateVelocity(measOuter, gains, dt);
+		this.currentController().outerUpdate(measured, this.currentGains(), dt);
 	}
 
-	// Inner motor loop. Returns { force, torque } and also caches them
-	// on this.lastForce / this.lastYawTorque so the integrator can hold
-	// them between firings via ZOH.
+	// Fast loop — every controller emits per-wheel torque, motor turns
+	// it into chassis force + yaw torque, sim integrates with ZOH
+	// between firings.
 	updateInner(measured, dt, motor) {
-		const controller = this.currentController();
-		const gains      = this.currentGains();
-		const command    = this._command;
+		const controller   = this.currentController();
+		const gains        = this.currentGains();
+		const drivetrain   = this.ui.readDrivetrain();
 
-		if (this.isCascade()) {
-			const cgains = this.ui.readCascadeGains();
-			const out = this.stack.update(measured, command.cascadeCommand, cgains, motor, dt);
-			this.lastForce     = out.wheelOut.force_fwd_actual;
-			this.lastYawTorque = out.wheelOut.torque_yaw_actual;
-			this._lastStackOut = out;
-			this._recordCascade(measured, command, out);
-		} else {
-			const measInner = controller instanceof PitchHoldController
-				? { ...measured, pitch: measured.pitch - command.tiltSetpoint }
-				: measured;
-			this.lastForce = controller.produceForce(measInner, gains, dt, motor);
+		const wheelOut = controller.innerUpdate(measured, gains, dt, motor);
+		const applied  = motor.applyTorque(wheelOut, measured, dt, drivetrain);
 
-			// Yaw runs at the inner rate too. Pilot sets the target rate;
-			// YawController applies P feedback to drive measured rate to
-			// target.
-			this.yawController.target_yaw_rate = command.yawRateSetpoint;
-			this.lastYawTorque = this.yawController.update(measured, this.ui.readYawGains());
+		this.lastForce        = applied.force;
+		this.lastYawTorque    = applied.yaw_torque;
+		this.lastTorqueLeft   = wheelOut.torque_left;
+		this.lastTorqueRight  = wheelOut.torque_right;
+		this.lastPwmLeft      = applied.pwm_left;
+		this.lastPwmRight     = applied.pwm_right;
 
-			// "Shadow" forward pass of the NN on the same sensor state —
-			// regardless of which controller is driving. Lets us plot
-			// what the NN would say alongside the active controller.
-			if (this.controllers.nn.mlp && controller !== this.controllers.nn) {
-				this.controllers.nn.vel_cart_target = command.navVelDesired;
-				this.controllers.nn.produceForce(measInner, gains, dt, motor);
-			}
-
-			this._recordLegacy(measured, command, controller);
+		// Shadow forward pass of the NN on the same sensor state —
+		// regardless of who's driving. Lets us plot what the NN would
+		// say alongside the active controller. Skip when NN is the
+		// active controller (it already ran).
+		if (this.controllers.nn.mlp && controller !== this.controllers.nn) {
+			this.controllers.nn.vel_cart_target = this._command.navVelDesired ?? 0;
+			this.controllers.nn.innerUpdate(measured, this.currentGainsFor('nn'), dt, motor);
 		}
+
+		this._record(measured);
 
 		return { force: this.lastForce, torque: this.lastYawTorque };
 	}
 
-	// Cascade tuples — every layer's stream so a single recording session
-	// feeds any of the layer NN trainers. Schema is one push per layer
-	// per inner tick.
-	_recordCascade(measured, command, out) {
-		if (!this.recorder.recording) return;
-		const stack = this.stack;
-		this.recorder.recordCascadeMixer({
-			vel_lpf:      stack.mixer.vel_lpf,
-			vel_target:   stack.mixer.vel_target,
-			pitch_target: stack.mixer.pitch_target,
-		});
-		this.recorder.recordCascadePitch({
-			pitch:        measured.pitch,
-			pitch_rate:   measured.pitch_rate,
-			pitch_target: stack.mixer.pitch_target,
-			force_fwd:    stack.attitude.lastForceFwd,
-		});
-		this.recorder.recordCascadeYaw({
-			heading_err: stack.attitude.lastHeadingErr,
-			yaw_rate:    measured.yaw_rate,
-			torque_yaw:  stack.attitude.lastTorqueYaw,
-		});
-		this.recorder.recordCascadeWheels({
-			force_fwd:   stack.attOut.force_fwd,
-			torque_yaw:  stack.attOut.torque_yaw,
-			vel_cart:    measured.vel_cart,
-			yaw_rate:    measured.yaw_rate,
-			pwm_left:    out.wheelOut.pwm_left,
-			pwm_right:   out.wheelOut.pwm_right,
-		});
-		// Nav recording only meaningful in auto mode.
-		if (command.cascadeCommand?.mode === 'auto') {
-			const dx = command.navTarget.x - measured.x;
-			const dz = command.navTarget.z - (measured.z ?? 0);
-			this.recorder.recordCascadeNav({
-				dx, dz,
-				heading:         measured.heading,
-				vel_cart:        measured.vel_cart,
-				vel_target_body: stack.navOut.vel_target_body,
-				heading_err:     stack.nav.heading_err,
-			});
-		}
+	// Build a gain bag for a non-active controller (used for the NN
+	// shadow pass when something else is driving).
+	currentGainsFor(type) {
+		if (type === 'cascade') return this.ui.readCascadeGains();
+		const yaw = this.ui.readYawGains();
+		const dt  = this.ui.readDrivetrain();
+		const wb  = { wheelbase: dt.wheelbase };
+		if (type === 'ardubalance') return { ...this.ui.readArduGains(), ...yaw, ...wb };
+		return { ...this.ui.readGains(), ...yaw, ...wb };
 	}
 
-	// Legacy ArduBalance recording — distill the cascaded firmware
-	// controller specifically. PID is ignored on purpose.
-	_recordLegacy(measured, command, controller) {
+	_record(measured) {
 		if (!this.recorder.recording) return;
-		if (!(controller instanceof ArduBalanceController)) return;
-		this.recorder.record({
-			pitch:           measured.pitch,
-			pitch_rate:      measured.pitch_rate,
-			vel_cart:        measured.vel_cart,
-			vel_cart_target: command.navVelDesired,
-			pwm:             controller.lastPWM ?? 0,
-		});
+		const command = this._command;
+
+		if (this.isCascade()) {
+			const stack = this.stack;
+			this.recorder.recordCascadeMixer({
+				vel_lpf:      stack.mixer.vel_lpf,
+				vel_target:   stack.mixer.vel_target,
+				pitch_target: stack.mixer.pitch_target,
+			});
+			this.recorder.recordCascadePitch({
+				pitch:        measured.pitch,
+				pitch_rate:   measured.pitch_rate,
+				pitch_target: stack.mixer.pitch_target,
+				force_fwd:    stack.attitude.lastForceFwd,
+			});
+			this.recorder.recordCascadeYaw({
+				heading_err: stack.attitude.lastHeadingErr,
+				yaw_rate:    measured.yaw_rate,
+				torque_yaw:  stack.attitude.lastTorqueYaw,
+			});
+			if (command.cascadeCommand?.mode === 'auto') {
+				const dx = command.navTarget.x - measured.x;
+				const dz = command.navTarget.z - (measured.z ?? 0);
+				this.recorder.recordCascadeNav({
+					dx, dz,
+					heading:         measured.heading,
+					vel_cart:        measured.vel_cart,
+					vel_target_body: stack.navOut.vel_target_body,
+					heading_err:     stack.nav.heading_err,
+				});
+			}
+			return;
+		}
+
+		// ArduBalance whole-stack distillation tuples. PitchHold and NN
+		// are not training targets; skip.
+		const controller = this.currentController();
+		if (controller instanceof ArduBalanceController) {
+			this.recorder.record({
+				pitch:           measured.pitch,
+				pitch_rate:      measured.pitch_rate,
+				vel_cart:        measured.vel_cart,
+				vel_cart_target: command.navVelDesired,
+				pwm:             controller.lastPWM ?? 0,
+			});
+		}
 	}
 }
