@@ -170,7 +170,7 @@ export class Nav {
 	// without FF the heading_target was a 60 Hz staircase and Attitude would
 	// catch up in a few ms then idle until the next step, producing a
 	// rotate-stop-rotate stutter while the user held the yaw stick).
-	updateFbw(sensors, stick, gains, dt) {
+	updateFBW(sensors, stick, gains, dt) {
 		const vel_target = (stick.fwd ?? 0) * gains.v_max;
 
 		const yaw_rate_cmd = (stick.yaw ?? 0) * (gains.MaxYawRate ?? 1.5);

@@ -34,11 +34,11 @@
 //   tilt  — debug. Pilot's pitch_target injected directly, Nav and Mixer
 //           skipped. Used to tune Attitude in isolation.
 
-import { Nav      } from './nav.js';
-import { NavMixer } from './mixer.js';
-import { Attitude } from './attitude.js';
-import { Wheels   } from './wheels.js';
-import { Safety   } from './safety.js';
+import { Nav      } from './Nav.js';
+import { NavMixer } from './Mixer.js';
+import { Attitude } from './Attitude.js';
+import { Wheels   } from './Wheels.js';
+import { Safety   } from './Safety.js';
 
 const DEFAULT_RATES = { nav: 60, mixer: 100, attitude: 100, wheels: 400 };
 
@@ -140,7 +140,7 @@ export class ControllerStack {
 	_runNav(sensors, command, navGains, dt) {
 		switch (command.mode) {
 			case 'auto': return this.nav.updateAuto(sensors, navGains);
-			case 'fbw':  return this.nav.updateFbw(sensors, command.stick ?? {}, navGains, dt);
+			case 'fbw':  return this.nav.updateFBW(sensors, command.stick ?? {}, navGains, dt);
 			default:     return this.navOut;   // unknown mode: hold last
 		}
 	}

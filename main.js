@@ -1,4 +1,4 @@
-import { App } from './src/app.js';
+import { App } from './src/App.js';
 
 // Browsers (Firefox notably) cache number-input values across reloads —
 // edits to HTML `value="…"` defaults silently lose to the previous session.

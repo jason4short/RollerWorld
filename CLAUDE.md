@@ -40,3 +40,4 @@ Mixing body-frame and world-frame state is the #1 source of subtle bugs here.
 ## Working style
 
 - Commit early, commit often — small checkpoints with one-line messages beat one giant commit.
+- Don't offer to `/schedule` follow-up agents. If a task has a natural next step, just ask "what's next?".

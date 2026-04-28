@@ -120,14 +120,14 @@ export class NavController {
 	// Fly-by-wire: pilot stick directly sets the body-frame velocity setpoint
 	// and yaw rate. The same vel_lpf / Kvel inner-loop math from update() runs,
 	// so centering the stick brakes hard via `Kvel * (0 - vel_lpf)`.
-	updateFbw(sensors, stick, gains, dt = 1 / 60) {
-		const time_constant = 0.1;
-		const alpha         = dt / (time_constant + dt);
-		this.vel_lpf          = (1 - alpha) * this.vel_lpf + alpha * sensors.vel_cart;
+	updateFBW(sensors, stick, gains, dt = 1 / 60) {
+		const time_constant 	= 0.1;
+		const alpha				= dt / (time_constant + dt);
+		this.vel_lpf			= (1 - alpha) * this.vel_lpf + alpha * sensors.vel_cart;
 
-		const vel_target			= (stick.fwd ?? 0) * gains.v_max;
-		const vel_desired			= this._slewVelDesired(vel_target, gains, dt);
-		this.vel_desired_last		= vel_desired;
+		const vel_target		= (stick.fwd ?? 0) * gains.v_max;
+		const vel_desired		= this._slewVelDesired(vel_target, gains, dt);
+		this.vel_desired_last	= vel_desired;
 		this.err_last			= 0;
 		this.heading_err_last	= 0;
 
