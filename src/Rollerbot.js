@@ -58,8 +58,16 @@ export class Rollerbot {
 		this.lastPwmRight     = 0;
 
 		// The current command, set by applyCommand() once per RAF and
-		// read by updateOuter/updateInner each time they fire.
+		// read by the outer/inner firings.
 		this._command = null;
+
+		// Outer/inner timing — bot owns its own multi-rate schedule.
+		// Loop hands DT (physics step) per tick; we accumulate and fire
+		// the slow loop at outerHz, fast loop at innerHz.
+		this._tOuter = 0;
+		this._tInner = 0;
+		this.outerHz = 100;
+		this.innerHz = 400;
 	}
 
 	isCascade() { return this.controllerType === 'cascade'; }
@@ -86,6 +94,8 @@ export class Rollerbot {
 		this.lastTorqueRight  = 0;
 		this.lastPwmLeft      = 0;
 		this.lastPwmRight     = 0;
+		this._tOuter          = 0;
+		this._tInner          = 0;
 	}
 
 	// Pre-step setup. Pilot has decided what it wants; stash the command
@@ -123,30 +133,48 @@ export class Rollerbot {
 		}
 	}
 
-	// Apply per-frame rate UI to the cascade layer schedule. Nav is
-	// fixed at 60 Hz (the "human-perceptible" decision rate); mixer/
-	// attitude/wheels track outer/inner.
+	// Apply per-frame rate UI. Bot uses outerHz/innerHz directly for
+	// legacy controllers; cascade also propagates them into its
+	// per-layer schedule (Nav fixed at 60 Hz — human-perceptible).
 	applyRates({ outerHz, innerHz }) {
-		if (!this.isCascade()) return;
-		this.stack.setRates({
-			nav:      60,
-			mixer:    outerHz,
-			attitude: outerHz,
-			wheels:   innerHz,
-		});
+		this.outerHz = outerHz;
+		this.innerHz = innerHz;
+		if (this.isCascade()) {
+			this.stack.setRates({
+				nav:      60,
+				mixer:    outerHz,
+				attitude: outerHz,
+				wheels:   innerHz,
+			});
+		}
 	}
 
-	// Slow loop — legacy controllers run their angle PD here. Cascade
-	// owns its own internal scheduling and ignores this hook.
-	updateOuter(measured, dt) {
-		if (this.isCascade()) return;
-		this.currentController().outerUpdate(measured, this.currentGains(), dt);
+	// Loop-facing tick. Called once per physics step (DT). Accumulates
+	// time and fires outerUpdate / innerUpdate when their periods elapse.
+	// Cascade owns its own internal scheduling — for cascade we tick
+	// innerUpdate every step and the stack throttles inside.
+	tick(measured, dt, motor) {
+		this._tOuter += dt;
+		this._tInner += dt;
+
+		const dtOuter = 1 / Math.max(1, this.outerHz);
+		const dtInner = 1 / Math.max(1, this.innerHz);
+
+		if (!this.isCascade() && this._tOuter >= dtOuter) {
+			this.currentController().outerUpdate(measured, this.currentGains(), dtOuter);
+			this._tOuter = 0;
+		}
+
+		if (this._tInner >= dtInner) {
+			this._fireInner(measured, dtInner, motor);
+			this._tInner = 0;
+		}
 	}
 
 	// Fast loop — every controller emits per-wheel torque, motor turns
 	// it into chassis force + yaw torque, sim integrates with ZOH
 	// between firings.
-	updateInner(measured, dt, motor) {
+	_fireInner(measured, dt, motor) {
 		const controller   = this.currentController();
 		const gains        = this.currentGains();
 		const drivetrain   = this.ui.readDrivetrain();

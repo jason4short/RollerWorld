@@ -1,15 +1,12 @@
-// Loop — the multi-rate scheduler. The only place that knows about
-// dueSensor / dueOuter / dueInner. Three peers (Sim / Robot / Pilot)
-// don't think about timing; Loop decides when to ask them to do their
-// job.
+// Loop — RAF dispatcher + sensor sampling + physics integration.
 //
-// One advance() call per RAF. The accumulator banks wall-clock time;
-// every DT (2 ms at 500 Hz) we drain one physics step. Within that
-// step:
+// Each advance() banks wall-clock time and drains it in DT (2 ms at
+// 500 Hz) physics steps. Within a step:
 //
-//   sensorHz — Sim samples the IMU/encoder, optionally lidar/road
-//   outerHz  — Robot's outer attitude loop fires (legacy controllers only)
-//   innerHz  — Robot's inner motor loop fires; new force/torque produced
+//   sensorHz — Sim samples IMU/encoder (+ optional lidar/road)
+//   bot.tick — Rollerbot accumulates dt and fires outer/inner controller
+//              updates on its own schedule (was Loop's job; CP6 moved
+//              the timing into the bot)
 //   DT       — Sim integrates the held force/torque
 //   per-step — pushHistory snapshots state into the plotter ring
 //
@@ -18,22 +15,18 @@
 //
 // What this teaches: change rates.innerHz from 400 to 50 in the UI and
 // the bot tips. Not because the controller is wrong, but because the
-// actuator can't keep up with the dynamics. Same lesson as on real
+// actuator can't keep up with the dynamics — same lesson as on real
 // hardware.
 
 export class Loop {
 	constructor() {
 		this.accumulator = 0;
 		this.dueSensor   = 0;
-		this.dueOuter    = 0;
-		this.dueInner    = 0;
 	}
 
 	reset() {
 		this.accumulator = 0;
 		this.dueSensor   = 0;
-		this.dueOuter    = 0;
-		this.dueInner    = 0;
 	}
 
 	// One animation frame. Returns { justFell } so the caller can flip
@@ -66,8 +59,6 @@ export class Loop {
 		robot.applyRates(rates);
 
 		const dtSensor = 1 / Math.max(1, rates.sensorHz);
-		const dtOuter  = 1 / Math.max(1, rates.outerHz);
-		const dtInner  = 1 / Math.max(1, rates.innerHz);
 
 		let justFell = false;
 
@@ -83,21 +74,8 @@ export class Loop {
 				this.dueSensor += dtSensor;
 			}
 
-			// --- Outer attitude loop (legacy controllers only) ---
-			if (!robot.isCascade()) {
-				this.dueOuter -= sim.DT;
-				if (this.dueOuter <= 0) {
-					robot.updateOuter(sim.measured, dtOuter);
-					this.dueOuter += dtOuter;
-				}
-			}
-
-			// --- Inner motor loop (innerHz) — produces PWM/force ---
-			this.dueInner -= sim.DT;
-			if (this.dueInner <= 0) {
-				robot.updateInner(sim.measured, dtInner, sim.motor);
-				this.dueInner += dtInner;
-			}
+			// --- Rollerbot fires its own outer/inner cadences. ---
+			robot.tick(sim.measured, sim.DT, sim.motor);
 
 			// Physics integrates every DT with the last computed force
 			// held by ZOH between inner-loop firings.
