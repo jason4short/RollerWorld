@@ -6,7 +6,7 @@
 //
 // Position is intentionally NOT an input. Position-relative-to-target is a
 // nav-layer concern; the controller's job is to track a commanded body-frame
-// velocity. Yaw is a separate per-controller branch (see innerUpdate).
+// velocity. Yaw is a separate per-controller branch (see fastLoop).
 //
 // `vel_cart_prev` (last tick's cart velocity) is the damping channel — the
 // NN can learn its own d/dt internally without us hand-rolling a noisy
@@ -15,8 +15,8 @@
 //
 // Uniform interface:
 //   c.setAttitude(tilt, yawRate)   — tilt unused (NN drives via velocity)
-//   c.outerUpdate(sensors, gains, dt)            — no-op
-//   c.innerUpdate(sensors, gains, dt, motor)
+//   c.slowLoop(sensors, gains, dt)            — no-op
+//   c.fastLoop(sensors, gains, dt, motor)
 //                          → { torque_left, torque_right }
 //
 // vel_cart_target is set by Pilot/Rollerbot via a separate property
@@ -56,16 +56,16 @@ export class NNController {
 
 	// Cruise: NN's natural command is body-frame velocity, so speed maps
 	// directly to vel_cart_target. Heading drives a P-loop in
-	// innerUpdate, same shape as ArduBalance's stabilize_yaw port.
+	// fastLoop, same shape as ArduBalance's stabilize_yaw port.
 	setCruise(speed, heading) {
 		this.cruise_active   = true;
 		this.vel_cart_target = speed   ?? 0;
 		this.cruise_heading  = heading ?? 0;
 	}
 
-	outerUpdate() {}
+	slowLoop() {}
 
-	innerUpdate(sensors, gains, dt, motor) {
+	fastLoop(sensors, gains, dt, motor) {
 		const force_fwd = this._produceForce(sensors, motor);
 
 		// Cruise mode synthesizes yaw_rate from heading P-loop; otherwise

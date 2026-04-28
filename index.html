@@ -216,25 +216,6 @@
   </details>
 
   <details class="panel" data-tab="control" data-ctrl="cascade">
-    <summary>Nav — world error → vel/heading targets</summary>
-    <p style="font-size:11px; color:#888; margin: 0 0 6px 0">
-      Auto-mode logic only. NN smooths the discrete deadzone/heading gates —
-      bot behavior may differ near boundaries. Honest limitation: not every
-      controller is a clean function.
-    </p>
-    <label>Nav (auto)
-      <select id="nav_mode_nn">
-        <option value="rule" selected>Rule (waypoint logic)</option>
-        <option value="nn">Neural net (trained)</option>
-      </select>
-    </label>
-    <div class="row" style="margin-top:4px">
-      <button id="btnTrainNavNN" class="warn">Train nav NN</button>
-    </div>
-    <div id="navNNStats" style="font-size:11px; color:#888; margin-top:4px"></div>
-  </details>
-
-  <details class="panel" data-tab="control" data-ctrl="cascade">
     <summary>Mixer — velocity → tilt</summary>
     <p style="font-size:11px; color:#888; margin: 0 0 6px 0">
       Closes velocity error into a body tilt. The smallest learnable layer.

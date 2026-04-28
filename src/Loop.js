@@ -51,9 +51,7 @@ export class Loop {
 		
 		pilot.maybeReplan(sensors, sim.occupancyGrid, sim.simElapsedTime);
 		
-		const command = pilot.command(sensors,
-			Math.max(0.001, Math.min(0.1, deltaTime || 0.016)),
-			sim.simElapsedTime);
+		const command = pilot.getCommand(sensors, Math.max(0.001, Math.min(0.1, deltaTime || 0.016)), sim.simElapsedTime);
 			
 		robot.applyCommand(command);
 		robot.applyRates(rates);

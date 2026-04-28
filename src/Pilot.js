@@ -150,7 +150,8 @@ export class Pilot {
 	//   auto  — waypoint nav (with reactive variant on lidar) → cruise
 	//   road  — color sensor → virtual stick → cruise
 	//   raw   — arrow-key tilt + integrated yaw heading → attitude
-	command(measured, deltaTime, simElapsedTime) {
+	
+	getCommand(measured, deltaTime, simElapsedTime) {
 		const senseOrTruth = measured ?? null;
 		const pilotMode    = this.ui.readPilotMode();
 
@@ -207,18 +208,20 @@ export class Pilot {
 	_cruise(speed, heading) {
 		this.nav.vel_desired_last = speed;
 		return {
-			intent:        'cruise',
-			speed, heading,
-			navTarget:     { x: this.nav.target_x, z: this.nav.target_z },
+			intent: 'cruise',
+			speed,
+			heading,
+			navTarget: { x: this.nav.target_x, z: this.nav.target_z },
 			navVelDesired: speed,
 		};
 	}
 
 	_attitude(tilt, yawRate) {
 		return {
-			intent:        'attitude',
-			tilt, yawRate,
-			navTarget:     { x: this.nav.target_x, z: this.nav.target_z },
+			intent: 'attitude',
+			tilt, 
+			yawRate,
+			navTarget: { x: this.nav.target_x, z: this.nav.target_z },
 			navVelDesired: 0,
 		};
 	}

@@ -8,8 +8,8 @@
 //
 // All four expose:
 //   c.setAttitude(tilt, yawRate)
-//   c.outerUpdate(sensors, gains, dt)            (no-op for single-rate)
-//   c.innerUpdate(sensors, gains, dt, motor)
+//   c.slowLoop(sensors, gains, dt)            (no-op for single-rate)
+//   c.fastLoop(sensors, gains, dt, motor)
 //                          → { torque_left, torque_right }
 //
 // Each controller owns its own pitch + yaw conversion to per-wheel
@@ -112,22 +112,17 @@ export class Rollerbot {
 		this._command = command;
 		const controller = this.currentController();
 
-		// Mirror nav target onto cascade's internal Nav (kept for the
-		// existing NN training path that imitates updateAuto).
-		if (this.isCascade()) {
-			this.stack.nav.target_x = command.navTarget.x;
-			this.stack.nav.target_z = command.navTarget.z;
-		}
-
 		if (command.intent === 'cruise') {
 			if (typeof controller.setCruise === 'function') {
 				controller.setCruise(command.speed, command.heading);
+				
 			} else {
 				// Attitude-only controller (PitchHold) can't be driven by
 				// nav. Quietly hold attitude at zero so the bot doesn't
 				// fall over; UI surfaces the mismatch.
 				controller.setAttitude(0, 0);
 			}
+			
 		} else {
 			controller.setAttitude(command.tilt, command.yawRate);
 		}
@@ -149,10 +144,11 @@ export class Rollerbot {
 		}
 	}
 
+
 	// Loop-facing tick. Called once per physics step (DT). Accumulates
-	// time and fires outerUpdate / innerUpdate when their periods elapse.
+	// time and fires slowLoop / fastLoop when their periods elapse.
 	// Cascade owns its own internal scheduling — for cascade we tick
-	// innerUpdate every step and the stack throttles inside.
+	// fastLoop every step and the stack throttles inside.
 	tick(measured, dt, motor) {
 		this._tOuter += dt;
 		this._tInner += dt;
@@ -161,25 +157,26 @@ export class Rollerbot {
 		const dtInner = 1 / Math.max(1, this.innerHz);
 
 		if (!this.isCascade() && this._tOuter >= dtOuter) {
-			this.currentController().outerUpdate(measured, this.currentGains(), dtOuter);
+			this.currentController().slowLoop(measured, this.currentGains(), dtOuter);
 			this._tOuter = 0;
 		}
 
 		if (this._tInner >= dtInner) {
-			this._fireInner(measured, dtInner, motor);
+			this._fastLoop(measured, dtInner, motor);
 			this._tInner = 0;
 		}
 	}
 
+
 	// Fast loop — every controller emits per-wheel torque, motor turns
 	// it into chassis force + yaw torque, sim integrates with ZOH
 	// between firings.
-	_fireInner(measured, dt, motor) {
+	_fastLoop(measured, dt, motor) {
 		const controller   = this.currentController();
 		const gains        = this.currentGains();
 		const drivetrain   = this.ui.readDrivetrain();
 
-		const wheelOut = controller.innerUpdate(measured, gains, dt, motor);
+		const wheelOut = controller.fastLoop(measured, gains, dt, motor);
 		const applied  = motor.applyTorque(wheelOut, measured, dt, drivetrain);
 
 		this.lastForce        = applied.force;
@@ -195,7 +192,7 @@ export class Rollerbot {
 		// active controller (it already ran).
 		if (this.controllers.nn.mlp && controller !== this.controllers.nn) {
 			this.controllers.nn.vel_cart_target = this._command.navVelDesired ?? 0;
-			this.controllers.nn.innerUpdate(measured, this.currentGainsFor('nn'), dt, motor);
+			this.controllers.nn.fastLoop(measured, this.currentGainsFor('nn'), dt, motor);
 		}
 
 		this._record(measured);
@@ -217,7 +214,7 @@ export class Rollerbot {
 
 	// Uniform telemetry — pushHistory and per-panel plotters drain
 	// from this. Every controller exposes lastForceFwd / lastTorqueYaw
-	// (PitchHold and NN populate them in innerUpdate; cascade reads
+	// (PitchHold and NN populate them in fastLoop; cascade reads
 	// from its Attitude layer; ArduBalance from _produceForce). Where
 	// a field doesn't apply, it's 0 — the callers tolerate zeros so
 	// every signal in the schema can be plotted regardless of
@@ -278,17 +275,6 @@ export class Rollerbot {
 				yaw_rate:    measured.yaw_rate,
 				torque_yaw:  stack.attitude.lastTorqueYaw,
 			});
-			if (command.intent === 'cruise') {
-				const dx = command.navTarget.x - measured.x;
-				const dz = command.navTarget.z - (measured.z ?? 0);
-				this.recorder.recordCascadeNav({
-					dx, dz,
-					heading:         measured.heading,
-					vel_cart:        measured.vel_cart,
-					vel_target_body: stack.navOut.vel_target_body,
-					heading_err:     stack.nav.heading_err,
-				});
-			}
 			return;
 		}
 

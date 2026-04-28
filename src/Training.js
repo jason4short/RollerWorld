@@ -10,7 +10,6 @@
 //
 //   trainNN              — distill ArduBalance whole-stack: 5→1
 //   trainMixerNN         — cascade Mixer:        2→1   (vel/target → tilt)
-//   trainNavNN           — cascade Nav:          4→2   (dx/dz/heading/vel → vel/heading)
 //   trainAttitudePitchNN — cascade Attitude:     3→1   (pitch/rate/target → force)
 //   trainAttitudeYawNN   — cascade Attitude:     2→1   (heading_err/yaw_rate → torque)
 //   trainAttitudePitchRNN — same as pitch but RNN; learned hidden state instead of integrator
@@ -45,7 +44,6 @@ export class Training {
 		this.attitudePitchMlp = null;
 		this.attitudeYawMlp   = null;
 		this.mixerMlp         = null;
-		this.navMlp           = null;
 		this.attitudePitchRnn = null;
 	}
 
@@ -139,47 +137,6 @@ export class Training {
 		const finalLoss = lossHistory.at(-1);
 		stats.textContent = `done: loss=${finalLoss.toExponential(3)}	(${dt.toFixed(1)}s) — using NN`;
 		this.ui.log(this.sim.simElapsedTime, `mixer NN trained: final loss=${finalLoss.toExponential(3)} in ${dt.toFixed(1)}s, switched to NN`);
-	}
-
-	async trainNavNN() {
-		const hidden  = +document.getElementById('nnHidden').value;
-		const epochs  = Math.max(50, +document.getElementById('nnEpochs').value);
-		const samples = +document.getElementById('nnSamples').value;
-		const lr      = +document.getElementById('nnLR').value;
-		const stats   = document.getElementById('navNNStats');
-
-		const mode = document.getElementById('nnMode').value;
-		const recordedCount = this.recorder.count('cascade_nav');
-		if (mode === 'recorded' && recordedCount < 50) {
-			this.ui.log(this.sim.simElapsedTime, `need more recorded cascade_nav samples (have ${recordedCount}, want ≥50)`);
-			return;
-		}
-
-		const mlp      = new MLP(4, hidden, 2);
-		const navGains = this.ui.readCascadeGains().nav;
-		const srcDesc  = mode === 'random' ? `${samples} random/epoch` : `${recordedCount} recorded`;
-		stats.textContent = `training (${mode}): 0/${epochs}, ${srcDesc}, ${mlp.paramCount()} params`;
-		this.ui.log(this.sim.simElapsedTime, `training nav NN (${mode}, ${hidden} hidden, ${mlp.paramCount()} params)`);
-
-		const lossHistory = [];
-		const t0 = performance.now();
-		await this.nnTrainer.trainNav({
-			mlp, navGains, mode, data: this.recorder.data,
-			epochs, samplesPerEpoch: samples, lr, momentum: 0.9,
-			onProgress: (e, loss) => {
-				lossHistory.push(loss);
-				stats.textContent = `epoch ${e + 1}/${epochs}	loss=${loss.toExponential(3)}`;
-				this.drawLossPlot(lossHistory);
-			},
-		});
-		const dt = (performance.now() - t0) / 1000;
-
-		this.navMlp = mlp;
-		this.robot.stack.nav.setAutoMode('nn', mlp);
-		document.getElementById('nav_mode_nn').value = 'nn';
-		const finalLoss = lossHistory.at(-1);
-		stats.textContent = `done: loss=${finalLoss.toExponential(3)}	(${dt.toFixed(1)}s) — using NN`;
-		this.ui.log(this.sim.simElapsedTime, `nav NN trained: final loss=${finalLoss.toExponential(3)} in ${dt.toFixed(1)}s, switched to NN`);
 	}
 
 	async trainAttitudeYawNN() {

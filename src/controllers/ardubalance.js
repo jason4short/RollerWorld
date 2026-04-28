@@ -17,8 +17,8 @@ import { PWMTable } from '../physics/pwm-table.js';
 // Uniform interface:
 //   c.setAttitude(tilt, yawRate)            — direct: keyboard / raw mode
 //   c.setCruise(speed, heading)             — firmware-style FBW + stabilize_yaw
-//   c.outerUpdate(sensors, gains, dt)
-//   c.innerUpdate(sensors, gains, dt, motor) → {torque_left, torque_right}
+//   c.slowLoop(sensors, gains, dt)
+//   c.fastLoop(sensors, gains, dt, motor) → {torque_left, torque_right}
 //
 // Cruise mode is a faithful port of two firmware functions:
 //   - ROLL_PITCH_FBW (ArduBalance.pde:1314): pilot speed adds into the
@@ -72,14 +72,14 @@ export class ArduBalanceController {
 
 	// Called at outerHz by the bot — angle PD → vel_command, plus the
 	// firmware-style cruise speed offset when cruise mode is active.
-	outerUpdate(sensors, gains, dt) {
+	slowLoop(sensors, gains, dt) {
 		this._updateVelocity(sensors, gains, dt);
 		if (this.cruise_active) this.vel_command += this.cruise_speed;
 	}
 
 	// Called at innerHz — speed PID + FF → chassis PWM → force_fwd, plus
 	// a yaw P-loop, plus differential mix to per-wheel torque.
-	innerUpdate(sensors, gains, dt, motor) {
+	fastLoop(sensors, gains, dt, motor) {
 		const force_fwd = this._produceForce(sensors, gains, dt, motor);
 
 		// In cruise mode, derive yaw_rate_target from the heading P-loop

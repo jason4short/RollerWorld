@@ -9,8 +9,8 @@
 // Uniform controller surface (every controller implements this):
 //   c.setAttitude(tilt, yawRate)            — from Pilot (raw mode) or
 //                                              from a higher-level loop
-//   c.outerUpdate(sensors, gains, dt)       — slow loop (no-op here)
-//   c.innerUpdate(sensors, gains, dt, motor)
+//   c.slowLoop(sensors, gains, dt)       — slow loop (no-op here)
+//   c.fastLoop(sensors, gains, dt, motor)
 //                          → { torque_left, torque_right }
 //
 // gains: pitch params + yaw params + (optional) wheelbase override.
@@ -41,9 +41,9 @@ export class PitchHoldController {
 	}
 
 	// Single-rate controller — no slow loop.
-	outerUpdate() {}
+	slowLoop() {}
 
-	innerUpdate(sensors, gains, dt, motor) {
+	fastLoop(sensors, gains, dt, motor) {
 		const { Kp, Ki, Kd, Kx, Kv, Fmax,
 		        Kyaw = 0, MaxTauYaw = 5 } = gains;
 

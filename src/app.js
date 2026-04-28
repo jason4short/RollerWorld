@@ -550,8 +550,6 @@ export class App {
 			this.ui.log(this.simElapsedTime, `yaw: ${mode}`);
 		};
 
-		document.getElementById('btnTrainNavNN').onclick = () => this.training.trainNavNN();
-
 		// Planner mode (Direct / A* ground truth / A* lidar map / Reactive).
 		// Sync the planner instance to whatever the dropdown is showing
 		// at boot — Firefox restores SELECT values across reloads, which
@@ -568,18 +566,6 @@ export class App {
 			this.occupancyGrid.clear();
 			this.ui.log(this.simElapsedTime, 'occupancy map cleared');
 		};
-		document.getElementById('nav_mode_nn').onchange = e => {
-			const mode = e.target.value;
-			const mlp = this.training.navMlp;
-			if (mode === 'nn' && !mlp) {
-				this.ui.log(this.simElapsedTime, 'no trained nav NN yet — staying on rule');
-				e.target.value = 'rule';
-				return;
-			}
-			this.stack.nav.setAutoMode(mode, mlp);
-			this.ui.log(this.simElapsedTime, `nav (auto): ${mode}`);
-		};
-
 		document.getElementById('btnCalibrate').onclick = () => this.calibrateMotor();
 		document.getElementById('btnClearLUT').onclick = () => {
 			this.controllers.ardubalance.pwmTable.clear();
