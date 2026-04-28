@@ -1,29 +1,40 @@
-// Rollerbot — the brain. Holds four controllers behind a uniform
-// interface and dispatches per-frame commands to the active one.
+// Rollerbot — the brain plus the per-frame dispatcher.
+//
+// Holds four controllers behind a uniform interface and runs the whole
+// per-RAF flow:
+//
+//   1. read UI (params, sensor cfg, rates, motor cfg) and apply to Sim
+//   2. snapshot last sensor reading; ask Pilot for the current intent
+//   3. forward the intent to the active controller (setAttitude/Cruise/Auto)
+//   4. drain wall-clock time in DT physics steps:
+//      - sample sensors at sensorHz
+//      - tick controller (slowLoop at outerHz, fastLoop at innerHz)
+//      - integrate physics with the held force/torque (ZOH between firings)
+//      - push a history row for the plotter
+//
+// Controllers (the four that drive the bot):
 //
 //   pitch-hold   — single-loop PD-on-pitch (no actuator model)
 //   ardubalance  — the firmware Roller is modeled on (whole-stack reference)
 //   nn           — single MLP trained to imitate ArduBalance
-//   cascade      — modern layered: Nav → Mixer → Attitude → Wheels
+//   cascade      — modern layered: Mixer → Attitude → Wheels
 //
 // All four expose:
 //   c.setAttitude(tilt, yawRate)
-//   c.slowLoop(sensors, gains, dt)            (no-op for single-rate)
-//   c.fastLoop(sensors, gains, dt, motor)
-//                          → { torque_left, torque_right }
+//   c.slowLoop(sensors, gains, dt)              (no-op for single-rate)
+//   c.fastLoop(sensors, gains, dt, motor) → { torque_left, torque_right }
 //
 // Each controller owns its own pitch + yaw conversion to per-wheel
 // torque. The motor module then takes per-wheel torque, runs the
 // inverse-model FF + force-tracking PI + deadband + saturation, and
-// returns the chassis force / yaw torque the sim integrates.
+// returns the chassis force / yaw torque the sim integrates. ArduBalance
+// short-circuits this last step — its update_servos already produces
+// final motor PWMs, so we sum directly without re-deriving them.
 //
-// Rollerbot owns the recorder (App injects it). Recording happens
-// inline inside updateInner — the data dictionary for each recorded
-// tuple is right next to the layer that produces it.
-//
-// No scheduling here — Loop decides when updateOuter and updateInner
-// fire. No pilot input here either — Pilot decides what command to
-// send. Rollerbot just steps the active controller when asked.
+// What this teaches: change rates.innerHz from 400 to 50 in the UI and
+// the bot tips. Not because the controller is wrong, but because the
+// actuator can't keep up with the dynamics — same lesson as on real
+// hardware.
 
 import { PitchHoldController }   from './controllers/pitch-hold.js';
 import { ArduBalanceController } from './controllers/ardubalance.js';
@@ -62,12 +73,19 @@ export class Rollerbot {
 		this._command = null;
 
 		// Outer/inner timing — bot owns its own multi-rate schedule.
-		// Loop hands DT (physics step) per tick; we accumulate and fire
-		// the slow loop at outerHz, fast loop at innerHz.
+		// advance() drains wall-clock time in DT chunks and hands each
+		// physics step to tick(); tick() then accumulates dt and fires
+		// slowLoop at outerHz, fastLoop at innerHz.
 		this._tOuter = 0;
 		this._tInner = 0;
 		this.outerHz = 100;
 		this.innerHz = 400;
+
+		// Frame-level timing (was the Loop class). accumulator banks
+		// wall-clock time between RAFs; dueSensor gates Sim.sampleSensors
+		// at sensorHz inside the drain loop.
+		this.accumulator = 0;
+		this.dueSensor   = 0;
 	}
 
 	isCascade() { return this.controllerType === 'cascade'; }
@@ -96,6 +114,115 @@ export class Rollerbot {
 		this.lastPwmRight     = 0;
 		this._tOuter          = 0;
 		this._tInner          = 0;
+		this.accumulator      = 0;
+		this.dueSensor        = 0;
+	}
+
+	// ──────────────────────────────────────────────────────────────────────
+	// advance — one animation frame.
+	// ──────────────────────────────────────────────────────────────────────
+	// Returns { justFell } so App can flip pause UI when the bot tips over.
+	//
+	// Per RAF: read UI, ask Pilot for intent, drain time in DT steps. Each
+	// DT step samples sensors (sensorHz-gated), ticks the active controller
+	// via tick(), integrates physics, and pushes a history row. The flow
+	// here is the whole control story top to bottom; the helpers below are
+	// the parts.
+	advance(deltaTime, { sim, pilot, history, ui }) {
+		const params    = ui.readParams();
+		const sensorCfg = ui.readSensors();
+		const rates     = ui.readRates();
+		const motorCfg  = ui.readMotor();
+
+		sim.applyConfig({ params, motorCfg });
+		this.accumulator += deltaTime;
+
+		// Pilot work runs once per RAF. It's ok for pilot to peek at the
+		// last sensor sample even if it's slightly stale — the planner and
+		// dispatch don't need 500 Hz freshness. On the first frame after a
+		// reset, the sensor sample hasn't run yet, so fall back to truth
+		// state; harmless once Sim has sampled because measured replaces it.
+		const sensors = sim.measured ?? sim.pendulum.state;
+
+		pilot.maybeReplan(sensors, sim.occupancyGrid, sim.simElapsedTime);
+		
+		const command = pilot.getCommand(
+			sensors,
+			Math.max(0.001, Math.min(0.1, deltaTime || 0.016)),
+			sim.simElapsedTime,
+		);
+		
+		this.applyCommand(command);
+		this.applyRates(rates);
+
+		const dtSensor = 1 / Math.max(1, rates.sensorHz);
+		let justFell = false;
+
+		while (this.accumulator >= sim.DT) {
+			// Sensor sample (sensorHz). Force a sample on the first tick
+			// after reset so the controller has something to read.
+			this.dueSensor -= sim.DT;
+			if (this.dueSensor <= 0 || sim.measured === null) {
+				sim.sampleSensors(params, sensorCfg, {
+					scanLidar:    pilot.wantsLidar(),
+					scanRoad:     pilot.wantsRoad(),
+					integrateMap: pilot.shouldIntegrateMap(),
+				});
+				this.dueSensor += dtSensor;
+			}
+
+			// Controller fires its own outer/inner cadences inside tick().
+			this.tick(sim.measured, sim.DT, sim.motor);
+
+			// Plant integrates with the last computed force, held by ZOH
+			// between fastLoop firings.
+			sim.integrate(this.lastForce, this.lastYawTorque);
+
+			this._pushHistory(history, sim, pilot, command, params);
+
+			this.accumulator -= sim.DT;
+			if (sim.hasFallen()) { justFell = true; break; }
+		}
+
+		return { justFell };
+	}
+
+	// Plotter / panel-plot signal schema — single source of truth. Reaches
+	// across Sim, controller telemetry, and Pilot's nav diagnostics; that's
+	// the lesson, the plotter is a system-level view, not any one module's
+	// internal trace.
+	_pushHistory(history, sim, pilot, command, params) {
+		const state = sim.pendulum.state;
+		const cs = Math.cos(state.pitch);
+		const sn = Math.sin(state.pitch);
+		const x_CoM_true = state.x + params.L * sn;
+		const v_CoM_true = state.vel_cart + params.L * cs * state.pitch_rate;
+
+		const tm = this.telemetry();
+		history.push({
+			t:				sim.simElapsedTime,
+			pitch:			state.pitch,
+			pitch_rate:		state.pitch_rate,
+			x:				state.x,
+			vel_cart:		state.vel_cart,
+			x_CoM:			x_CoM_true,
+			v_CoM:			v_CoM_true,
+			F:				tm.force,
+			pwm:			tm.pwm,
+			pwm_nn:			tm.pwm_nn,
+			pwm_residual:	tm.pwm - tm.pwm_nn,
+			vel_command:	tm.vel_command,
+			vel_desired:	pilot.nav.vel_desired_last ?? 0,
+			err_x:			pilot.nav.err_last ?? 0,
+			tilt_sp:		command.intent === 'attitude' ? command.tilt : tm.pitch_target,
+			pitch_target:	tm.pitch_target,
+			force_fwd:		tm.force_fwd,
+			torque_yaw:		tm.yaw_torque,
+			pwm_left:		tm.pwm_left,
+			pwm_right:		tm.pwm_right,
+		});
+
+		if (history.length > 5000) history.shift();
 	}
 
 	// Pre-step setup. Pilot has decided what it wants; stash the command
@@ -113,16 +240,23 @@ export class Rollerbot {
 		const controller = this.currentController();
 
 		if (command.intent === 'cruise') {
-			if (typeof controller.setCruise === 'function') {
+			// Auto pilot mode + controller has a firmware-style internal
+			// nav (currently only ArduBalance) → hand it the raw waypoint
+			// so it can run get_dist_err / get_nav_pitch internally. This
+			// preserves the original codepath end-to-end (firmware
+			// introspection use case).
+			if (command.useAutoNav && typeof controller.setAuto === 'function') {
+				controller.setAuto(command.navTarget.x, command.navTarget.z);
+
+			} else if (typeof controller.setCruise === 'function') {
 				controller.setCruise(command.speed, command.heading);
-				
+
 			} else {
 				// Attitude-only controller (PitchHold) can't be driven by
 				// nav. Quietly hold attitude at zero so the bot doesn't
 				// fall over; UI surfaces the mismatch.
 				controller.setAttitude(0, 0);
 			}
-			
 		} else {
 			controller.setAttitude(command.tilt, command.yawRate);
 		}
@@ -172,26 +306,50 @@ export class Rollerbot {
 	// it into chassis force + yaw torque, sim integrates with ZOH
 	// between firings.
 	_fastLoop(measured, dt, motor) {
-		const controller   = this.currentController();
-		const gains        = this.currentGains();
-		const drivetrain   = this.ui.readDrivetrain();
+		const controller		= this.currentController();
+		const gains     		= this.currentGains();
+		const drivetrain		= this.ui.readDrivetrain();
 
-		const wheelOut = controller.fastLoop(measured, gains, dt, motor);
-		const applied  = motor.applyTorque(wheelOut, measured, dt, drivetrain);
+		const wheelOut			= controller.fastLoop(measured, gains, dt, motor);
 
-		this.lastForce        = applied.force;
-		this.lastYawTorque    = applied.yaw_torque;
-		this.lastTorqueLeft   = wheelOut.torque_left;
-		this.lastTorqueRight  = wheelOut.torque_right;
-		this.lastPwmLeft      = applied.pwm_left;
-		this.lastPwmRight     = applied.pwm_right;
+		// Two paths to the plant:
+		//   - Default (Cascade, PitchHold, NN): wheelOut has per-wheel
+		//     torque commands. motor.applyTorque runs FF + force-tracking
+		//     PI to derive PWMs that hit those torques.
+		//   - ArduBalance: wheelOut also includes pwm_left/pwm_right —
+		//     the firmware already computed final motor PWMs in
+		//     update_servos. Skip applyTorque so the firmware codepath
+		//     reaches the plant unchanged; just sum the per-wheel forces.
+		let applied;
+		
+		if (wheelOut.pwm_left !== undefined && wheelOut.pwm_right !== undefined) {
+			const wb   = drivetrain.wheelbase ?? motor.wheelbase;
+			const half = wb / 2;
+			applied = {
+				force:      wheelOut.torque_left + wheelOut.torque_right,
+				yaw_torque: (wheelOut.torque_right - wheelOut.torque_left) * half,
+				pwm_left:   wheelOut.pwm_left,
+				pwm_right:  wheelOut.pwm_right,
+			};
+		} else {
+			applied = motor.applyTorque(wheelOut, measured, dt, drivetrain);
+		}
+
+		this.lastForce      	= applied.force;
+		this.lastYawTorque  	= applied.yaw_torque;
+		this.lastTorqueLeft 	= wheelOut.torque_left;
+		this.lastTorqueRight	= wheelOut.torque_right;
+		this.lastPwmLeft    	= applied.pwm_left;
+		this.lastPwmRight   	= applied.pwm_right;
+
 
 		// Shadow forward pass of the NN on the same sensor state —
 		// regardless of who's driving. Lets us plot what the NN would
 		// say alongside the active controller. Skip when NN is the
 		// active controller (it already ran).
 		if (this.controllers.nn.mlp && controller !== this.controllers.nn) {
-			this.controllers.nn.vel_cart_target = this._command.navVelDesired ?? 0;
+			this.controllers.nn.vel_cart_target 	= this._command.navVelDesired ?? 0;
+			
 			this.controllers.nn.fastLoop(measured, this.currentGainsFor('nn'), dt, motor);
 		}
 

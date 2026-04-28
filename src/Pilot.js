@@ -184,11 +184,16 @@ export class Pilot {
 				this.advanceWaypointIfArrived(measured, simElapsedTime);
 				return this._cruise(speed, heading);
 			}
-			// Plain auto: nav.update outputs absolute speed + target heading.
+			// Plain auto: nav.update outputs absolute speed + target heading
+			// as a fallback for controllers without an internal navigator.
+			// Controllers that DO have one (ArduBalance) get routed through
+			// setAuto via the `useAutoNav` flag below — the controller then
+			// runs its own get_dist_err / get_nav_pitch chain so the firmware
+			// codepath is preserved end-to-end.
 			const out = this.nav.update(senseOrTruth, this.ui.readNavGains(), deltaTime);
 			this.keyYawHeading = out.heading;   // keep raw-mode reference in sync
 			this.advanceWaypointIfArrived(measured, simElapsedTime);
-			return this._cruise(out.speed, out.heading);
+			return this._cruise(out.speed, out.heading, /* useAutoNav */ true);
 		}
 
 		if (pilotMode === 'road') {
@@ -205,12 +210,16 @@ export class Pilot {
 		return this._attitude(this.keyTilt, this.keyYawRate);
 	}
 
-	_cruise(speed, heading) {
+	_cruise(speed, heading, useAutoNav = false) {
 		this.nav.vel_desired_last = speed;
 		return {
 			intent: 'cruise',
 			speed,
 			heading,
+			// Tells the bot "the navTarget is real, not stale — route to
+			// the controller's setAuto path if it has one." Set only by
+			// the auto pilot mode where we have a live waypoint queue.
+			useAutoNav,
 			navTarget: { x: this.nav.target_x, z: this.nav.target_z },
 			navVelDesired: speed,
 		};

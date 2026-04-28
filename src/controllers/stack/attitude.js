@@ -54,9 +54,10 @@ export class Attitude {
 		// history, but an RNN can learn to be the auto-trim integrator
 		// from raw sensor sequences.
 		this.pitchMode = 'rule';
+		this.yawMode   = 'rule';
+
 		this.pitchMlp  = null;
 		this.pitchRnn  = null;
-		this.yawMode   = 'rule';
 		this.yawMlp    = null;
 	}
 
@@ -95,7 +96,9 @@ export class Attitude {
 	// sensors:  { pitch, pitch_rate, heading, yaw_rate }
 	// gains:    pitch:  { pitch_P, pitch_D, pitch_I, force_max }
 	//           yaw:    { heading_P, yaw_rate_max, yaw_rate_P, torque_max }
-	update(mixerOut, sensors, gains, dt) {
+	
+	update(mixerOut, sensors, gains, dt)
+	{
 		const force_fwd  = this._pitch(mixerOut.pitch_target, sensors, gains, dt);
 		const torque_yaw = this._yaw  (
 			mixerOut.yaw_target, mixerOut.heading_rate_ff ?? 0, sensors, gains,
@@ -105,7 +108,8 @@ export class Attitude {
 		return { force_fwd, torque_yaw };
 	}
 
-	_pitch(pitch_target, sensors, gains, dt) {
+	_pitch(pitch_target, sensors, gains, dt)
+	{
 		if (this.pitchMode === 'nn'  && this.pitchMlp) {
 			return this._pitchNN(pitch_target, sensors, gains);
 		}
@@ -117,7 +121,8 @@ export class Attitude {
 
 	// Pitch (rule): PD on (measured_pitch + balance_offset − target), with
 	// the balance_offset slowly absorbing IMU bias when the bot is quiet.
-	_pitchRule(pitch_target, sensors, gains, dt) {
+	_pitchRule(pitch_target, sensors, gains, dt)
+	{
 		const pitch_meas = sensors.pitch + this.balance_offset;
 		const pitch_err  = pitch_meas - pitch_target;
 
@@ -140,7 +145,8 @@ export class Attitude {
 	// Stateless pitch math. The rule branch and the NN trainer both
 	// call this so they agree on the function being approximated.
 	// (pitch already includes balance_offset if you want it baked in.)
-	static computePitchRule({ pitch, pitch_rate, pitch_target }, gains) {
+	static computePitchRule({ pitch, pitch_rate, pitch_target }, gains)
+	{
 		const { pitch_P, pitch_D, force_max } = gains;
 		const pitch_err = pitch - pitch_target;
 		let force = pitch_P * pitch_err + pitch_D * pitch_rate;

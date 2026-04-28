@@ -58,10 +58,10 @@ export class ControllerStack {
 		// Last output of each layer (zero-order hold between firings).
 		// navOut is now just whatever setCruise stashed — the Nav layer
 		// is gone; this field stays as Mixer's input shape.
-		this.navOut   = { vel_target_body: 0, heading_target: 0, heading_rate_ff: 0 };
-		this.mixerOut = { pitch_target: 0,    yaw_target: 0 };
-		this.attOut   = { force_fwd: 0,       torque_yaw: 0 };
-		this.wheelOut = { torque_left: 0, torque_right: 0 };
+		this.navOut   = { vel_target_body: 0,	heading_target: 0, heading_rate_ff: 0 };
+		this.mixerOut = { pitch_target: 0,		yaw_target: 0 };
+		this.attOut   = { force_fwd: 0,			torque_yaw: 0 };
+		this.wheelOut = { torque_left: 0,		torque_right: 0 };
 
 		// Time-since-last-firing per layer (s).
 		this.tMixer = 0; this.tAttitude = 0; this.tWheels = 0;
@@ -100,18 +100,16 @@ export class ControllerStack {
 
 	slowLoop() { /* internal scheduling owns the slow layers */ }
 
-	fastLoop(sensors, gains, dt, motor) {
-		const out = this.update(sensors, this._command, gains, motor, dt);
-		return out.wheelOut;   // { torque_left, torque_right }
-	}
 
 	// Caller ticks this at the wheels rate. Slower layers fire when their
 	// period has elapsed; everyone else sees the cached output above.
 	//
-	// command: { mode: 'cruise', speed, heading } | { mode: 'tilt', pitch_target, yaw_target, heading_rate_ff }
-	// gains:   { mixer, attitude, wheels, safety }
-	update(sensors, command, gains, motor, dt)
-	{
+	// command (from setCruise / setAttitude):
+	//   { mode: 'cruise', speed, heading } |
+	//   { mode: 'tilt',   pitch_target, yaw_target, heading_rate_ff }
+	// gains: { mixer, attitude, wheels, safety }
+	fastLoop(sensors, gains, dt, motor) {
+		const command = this._command;
 		this.tMixer += dt; this.tAttitude += dt; this.tWheels += dt;
 
 		const tiltMode = command.mode === 'tilt';
@@ -133,10 +131,11 @@ export class ControllerStack {
 				this.mixerOut = this.mixer.update(this.navOut, sensors, gains.mixer, this.tMixer);
 				this.tMixer = 0;
 			}
+			
 		} else {
 			// Pilot sets the angle target directly — refreshed every tick
 			// so stick changes propagate without waiting for a Mixer
-			// firing. heading_rate_ff lets Attitude rotate smoothly
+			// firing. heading_rate_ff lets Yaw rotate smoothly
 			// between integrated-target updates instead of stepping.
 			this.mixerOut = {
 				pitch_target:    command.pitch_target    ?? 0,
@@ -149,16 +148,12 @@ export class ControllerStack {
 			this.attOut = this.attitude.update(this.mixerOut, sensors, gains.attitude, this.tAttitude);
 			this.tAttitude = 0;
 		}
+		
 		if (this.tWheels >= this.dtWheels) {
 			this.wheelOut = this.wheels.update(this.attOut, sensors, gains.wheels);
 			this.tWheels = 0;
 		}
 
-		return {
-			navOut:   this.navOut,
-			mixerOut: this.mixerOut,
-			attOut:   this.attOut,
-			wheelOut: this.wheelOut,
-		};
+		return this.wheelOut;   // { torque_left, torque_right }
 	}
 }

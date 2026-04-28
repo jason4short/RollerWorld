@@ -74,12 +74,14 @@ export class NavMixer {
 		this._smoothVelocityFeedback(sensors, gains, dt);
 		this._slewVelocitySetpoint(navOut.vel_target_body ?? 0, gains, dt);
 		this._velocityErrorToTilt(gains);
-		this.yaw_target      = navOut.heading_target  ?? sensors.heading;
-		this.heading_rate_ff = navOut.heading_rate_ff ?? 0;
+		
+		this.yaw_target      		= navOut.heading_target  ?? sensors.heading;
+		this.heading_rate_ff 		= navOut.heading_rate_ff ?? 0;
+		
 		return {
-			pitch_target:    this.pitch_target,
-			yaw_target:      this.yaw_target,
-			heading_rate_ff: this.heading_rate_ff,
+			pitch_target:    		this.pitch_target,
+			yaw_target:      		this.yaw_target,
+			heading_rate_ff: 		this.heading_rate_ff,
 		};
 	}
 

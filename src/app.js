@@ -1,7 +1,6 @@
 import { Sim }						from './Sim.js';
 import { Rollerbot }				from './Rollerbot.js';
 import { Pilot }					from './Pilot.js';
-import { Loop }						from './Loop.js';
 import { Training }					from './Training.js';
 import { Motor }					from './physics/motor.js';
 import { WorldRenderer3D }			from './render/world-renderer-3d.js';
@@ -56,8 +55,6 @@ export class App {
 			joystick:      this.joystick,
 			lidarMaxRange: this.sim.lidar.maxRange,
 		});
-		this.loop = new Loop();
-
 		// Training UI — distillation of rule-based controllers into MLPs.
 		// Lives outside the sim/robot/pilot triad because it's a tool, not
 		// a per-frame concern; runs only when the user clicks Train.
@@ -124,7 +121,6 @@ export class App {
 		this.sim.reset({ params, initialPitch: th0 * Math.PI / 180 });
 		this.robot.reset();
 		this.pilot.reset();
-		this.loop.reset();
 		this.history.length = 0;
 		this.renderer.clearTrail?.();
 		this.render();
@@ -287,9 +283,8 @@ export class App {
 			const deltaTime = Math.min(0.05, (timestamp - this.lastTimeStamp) / 1000);
 			this.lastTimeStamp = timestamp;
 
-			const { justFell } = this.loop.advance(deltaTime, {
+			const { justFell } = this.robot.advance(deltaTime, {
 				sim:     this.sim,
-				robot:   this.robot,
 				pilot:   this.pilot,
 				history: this.history,
 				ui:      this.ui,
