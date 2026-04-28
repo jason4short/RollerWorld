@@ -15,15 +15,31 @@ import { PWMTable } from '../physics/pwm-table.js';
 // torque at the boundary.
 //
 // Uniform interface:
-//   c.setAttitude(tilt, yawRate)
+//   c.setAttitude(tilt, yawRate)            — direct: keyboard / raw mode
+//   c.setCruise(speed, heading)             — firmware-style FBW + stabilize_yaw
 //   c.outerUpdate(sensors, gains, dt)
 //   c.innerUpdate(sensors, gains, dt, motor) → {torque_left, torque_right}
+//
+// Cruise mode is a faithful port of two firmware functions:
+//   - ROLL_PITCH_FBW (ArduBalance.pde:1314): pilot speed adds into the
+//     velocity reference; angle PD holds the bot vertical (target=0).
+//   - get_stabilize_yaw (Attitude.pde:48): heading P-loop produces a
+//     yaw-rate target, clamped, fed into the same yaw branch as the
+//     direct yaw_rate path.
 
 export class ArduBalanceController {
 	constructor() {
 		this.target_angle    = 0;
 		this.yaw_rate_target = 0;
 		this.pwmTable        = new PWMTable();   // FF curve (linear until calibrated)
+
+		// Cruise mode — set by setCruise(speed, heading). When active,
+		// cruise_speed adds into vel_command in the outer loop and
+		// cruise_heading drives a P-loop for yaw_rate_target each tick.
+		this.cruise_active   = false;
+		this.cruise_speed    = 0;
+		this.cruise_heading  = 0;
+
 		this.reset();
 	}
 
@@ -41,22 +57,43 @@ export class ArduBalanceController {
 	setAttitude(tilt, yawRate) {
 		this.target_angle    = tilt    ?? 0;
 		this.yaw_rate_target = yawRate ?? 0;
+		this.cruise_active   = false;
 	}
 
-	// Called at outerHz by the bot — angle PD → vel_command.
+	// Firmware-style cruise: pilot commands speed (m/s) and absolute
+	// heading (rad). Angle target stays vertical; the speed feeds the
+	// outer loop directly, and a heading P-loop synthesizes yaw_rate.
+	setCruise(speed, heading) {
+		this.cruise_active  = true;
+		this.cruise_speed   = speed   ?? 0;
+		this.cruise_heading = heading ?? 0;
+		this.target_angle   = 0;
+	}
+
+	// Called at outerHz by the bot — angle PD → vel_command, plus the
+	// firmware-style cruise speed offset when cruise mode is active.
 	outerUpdate(sensors, gains, dt) {
 		this._updateVelocity(sensors, gains, dt);
+		if (this.cruise_active) this.vel_command += this.cruise_speed;
 	}
 
 	// Called at innerHz — speed PID + FF → chassis PWM → force_fwd, plus
 	// a yaw P-loop, plus differential mix to per-wheel torque.
 	innerUpdate(sensors, gains, dt, motor) {
-		const force_fwd  = this._produceForce(sensors, gains, dt, motor);
+		const force_fwd = this._produceForce(sensors, gains, dt, motor);
+
+		// In cruise mode, derive yaw_rate_target from the heading P-loop
+		// (firmware get_stabilize_yaw). Otherwise use the rate set by
+		// setAttitude directly.
+		let yaw_rate_target = this.yaw_rate_target;
+		if (this.cruise_active) {
+			yaw_rate_target = this._stabilizeYaw(sensors, gains);
+		}
 
 		// Yaw P-loop on rate error. Torque is the differential force
 		// times the wheelbase; the diff mix below converts to per-wheel.
 		const { Kyaw = 0, MaxTauYaw = 5 } = gains;
-		let torque_yaw = Kyaw * (this.yaw_rate_target - sensors.yaw_rate);
+		let torque_yaw = Kyaw * (yaw_rate_target - sensors.yaw_rate);
 		if (torque_yaw >  MaxTauYaw) torque_yaw =  MaxTauYaw;
 		if (torque_yaw < -MaxTauYaw) torque_yaw = -MaxTauYaw;
 
@@ -68,6 +105,22 @@ export class ArduBalanceController {
 			torque_left:  (force_fwd - torque_yaw / wb) / 2,
 			torque_right: (force_fwd + torque_yaw / wb) / 2,
 		};
+	}
+
+	// Firmware get_stabilize_yaw: heading P → yaw_rate target, clamped.
+	// Same shape as the original Attitude.pde:48 helper, just expressed
+	// in rad/s instead of cm/s converted via wheel_ratio. Uses Kheading
+	// + MaxYawRate from the controller's gain bag (merged in by
+	// Rollerbot.currentGains; see UI.readNavGains).
+	_stabilizeYaw(sensors, gains) {
+		const { Kheading = 2, MaxYawRate = 1.5 } = gains;
+		let heading_err = this.cruise_heading - sensors.heading;
+		while (heading_err >  Math.PI) heading_err -= 2 * Math.PI;
+		while (heading_err < -Math.PI) heading_err += 2 * Math.PI;
+		let rate = Kheading * heading_err;
+		if (rate >  MaxYawRate) rate =  MaxYawRate;
+		if (rate < -MaxYawRate) rate = -MaxYawRate;
+		return rate;
 	}
 
 	// ------------------------------------------------------------------------

@@ -99,6 +99,12 @@ export class ControllerStack {
 
 	setCascadeCommand(command) { this._command = command; }
 
+	// Cruise: absolute speed (m/s) + heading (rad). Mixer takes the
+	// resulting vel_target_body / heading_target like any other Nav out.
+	setCruise(speed, heading) {
+		this._command = { mode: 'cruise', speed, heading };
+	}
+
 	outerUpdate() { /* internal scheduling owns the slow layers */ }
 
 	innerUpdate(sensors, gains, dt, motor) {
@@ -165,9 +171,10 @@ export class ControllerStack {
 
 	_runNav(sensors, command, navGains, dt) {
 		switch (command.mode) {
-			case 'auto': return this.nav.updateAuto(sensors, navGains);
-			case 'fbw':  return this.nav.updateFBW(sensors, command.stick ?? {}, navGains, dt);
-			default:     return this.navOut;   // unknown mode: hold last
+			case 'auto':   return this.nav.updateAuto(sensors, navGains);
+			case 'fbw':    return this.nav.updateFBW(sensors, command.stick ?? {}, navGains, dt);
+			case 'cruise': return this.nav.updateCruise(command.speed ?? 0, command.heading ?? 0);
+			default:       return this.navOut;   // unknown mode: hold last
 		}
 	}
 }

@@ -186,6 +186,23 @@ export class Nav {
 		};
 	}
 
+	// ── Cruise mode ────────────────────────────────────────────────────────
+	// Pilot commands an absolute speed (m/s) and heading (rad). Nav doesn't
+	// integrate or project — it just forwards the targets. Equivalent to
+	// the firmware's FBW path with stick.fwd held at the speed setpoint
+	// and nav_yaw = heading.
+	updateCruise(speed, heading) {
+		this.vel_target_last  = speed;
+		this.heading_err      = 0;
+		this.distance_err     = 0;
+		this.fbw_heading_ref  = heading;
+		return {
+			vel_target_body: speed,
+			heading_target:  heading,
+			heading_rate_ff: 0,
+		};
+	}
+
 	// ── Tilt mode (debug, no nav at all) ───────────────────────────────────
 	// Used by raw arrow-key piloting. Bypasses velocity feedback entirely;
 	// caller injects pitch_target into Attitude directly. Returns null so

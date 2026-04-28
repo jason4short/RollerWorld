@@ -71,10 +71,11 @@ export class Rollerbot {
 	currentGains() {
 		if (this.controllerType === 'cascade') return this.ui.readCascadeGains();
 		const yaw = this.ui.readYawGains();
+		const nav = this.ui.readNavGains();   // for setCruise's heading P-loop
 		const dt  = this.ui.readDrivetrain();
 		const wb  = { wheelbase: dt.wheelbase };
-		if (this.controllerType === 'ardubalance') return { ...this.ui.readArduGains(), ...yaw, ...wb };
-		return { ...this.ui.readGains(), ...yaw, ...wb };
+		if (this.controllerType === 'ardubalance') return { ...this.ui.readArduGains(), ...yaw, ...nav, ...wb };
+		return { ...this.ui.readGains(), ...yaw, ...nav, ...wb };
 	}
 
 	reset() {
@@ -169,10 +170,11 @@ export class Rollerbot {
 	currentGainsFor(type) {
 		if (type === 'cascade') return this.ui.readCascadeGains();
 		const yaw = this.ui.readYawGains();
+		const nav = this.ui.readNavGains();
 		const dt  = this.ui.readDrivetrain();
 		const wb  = { wheelbase: dt.wheelbase };
-		if (type === 'ardubalance') return { ...this.ui.readArduGains(), ...yaw, ...wb };
-		return { ...this.ui.readGains(), ...yaw, ...wb };
+		if (type === 'ardubalance') return { ...this.ui.readArduGains(), ...yaw, ...nav, ...wb };
+		return { ...this.ui.readGains(), ...yaw, ...nav, ...wb };
 	}
 
 	_record(measured) {
