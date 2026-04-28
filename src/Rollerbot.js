@@ -215,6 +215,47 @@ export class Rollerbot {
 		return { ...this.ui.readGains(), ...yaw, ...nav, ...wb };
 	}
 
+	// Uniform telemetry — pushHistory and per-panel plotters drain
+	// from this. Every controller exposes lastForceFwd / lastTorqueYaw
+	// (PitchHold and NN populate them in innerUpdate; cascade reads
+	// from its Attitude layer; ArduBalance from _produceForce). Where
+	// a field doesn't apply, it's 0 — the callers tolerate zeros so
+	// every signal in the schema can be plotted regardless of
+	// controller.
+	telemetry() {
+		const ctrl       = this.currentController();
+		const isCascade  = this.isCascade();
+		const stack      = this.stack;
+		const ardu       = this.controllers.ardubalance;
+
+		const force_fwd = isCascade ? (stack.attitude.lastForceFwd  ?? 0) : (ctrl.lastForceFwd  ?? 0);
+		const torque_yaw = isCascade ? (stack.attitude.lastTorqueYaw ?? 0) : (ctrl.lastTorqueYaw ?? 0);
+
+		// Scalar PWM trace = larger-magnitude wheel.
+		const activePwm = Math.abs(this.lastPwmLeft) > Math.abs(this.lastPwmRight)
+			? this.lastPwmLeft
+			: this.lastPwmRight;
+
+		// Cascade exposes its mixer's pitch_target directly; legacy
+		// controllers use whatever was set via setAttitude (or 0 in
+		// cruise mode, where the angle target is held vertical).
+		const pitch_target = isCascade ? (stack.mixer.pitch_target ?? 0) : (ctrl.tilt_target ?? 0);
+
+		return {
+			force:        this.lastForce,
+			yaw_torque:   this.lastYawTorque,
+			torque_left:  this.lastTorqueLeft,
+			torque_right: this.lastTorqueRight,
+			pwm:          activePwm,
+			pwm_left:     this.lastPwmLeft,
+			pwm_right:    this.lastPwmRight,
+			pwm_nn:       this.controllers.nn.lastPWM ?? 0,
+			vel_command:  ardu.vel_command ?? 0,
+			pitch_target,
+			force_fwd, torque_yaw,
+		};
+	}
+
 	_record(measured) {
 		if (!this.recorder.recording) return;
 		const command = this._command;

@@ -103,13 +103,7 @@ export function pushHistory(history, sim, robot, pilot, command, params) {
 	const x_CoM_true = state.x + params.L * sn;
 	const v_CoM_true = state.vel_cart + params.L * cs * state.pitch_rate;
 
-	// "Motor PWM" = whatever the motor actually drove. Larger-magnitude
-	// wheel reported as the scalar trace; per-wheel PWMs are exposed below.
-	const isCascade = robot.isCascade();
-	const activePwm = Math.abs(robot.lastPwmLeft) > Math.abs(robot.lastPwmRight)
-		? robot.lastPwmLeft
-		: robot.lastPwmRight;
-
+	const tm = robot.telemetry();
 	history.push({
 		t:				sim.simElapsedTime,
 		pitch:			state.pitch,
@@ -118,24 +112,19 @@ export function pushHistory(history, sim, robot, pilot, command, params) {
 		vel_cart:		state.vel_cart,
 		x_CoM:			x_CoM_true,
 		v_CoM:			v_CoM_true,
-		F:				robot.lastForce,
-		pwm:			activePwm,
-		// NN shadow is always the NN's output, regardless of who's driving.
-		pwm_nn:			robot.controllers.nn.lastPWM ?? 0,
-		pwm_residual:	activePwm - (robot.controllers.nn.lastPWM ?? 0),
-		// vel_command only exists in ArduBalance — leave 0 otherwise.
-		vel_command:	robot.controllers.ardubalance.vel_command ?? 0,
-		vel_desired:	pilot.nav.vel_desired_last ?? robot.stack.mixer.vel_target ?? 0,
-		err_x:			pilot.nav.err_last ?? robot.stack.nav.distance_err ?? 0,
-		tilt_sp:		command.intent === 'attitude'
-							? command.tilt
-							: (robot.stack.mixer.pitch_target ?? 0),
-		// Cascade-specific traces (zero in legacy modes).
-		pitch_target:	robot.stack.mixer.pitch_target ?? 0,
-		force_fwd:		robot.stack.attitude.lastForceFwd ?? 0,
-		torque_yaw:		robot.stack.attitude.lastTorqueYaw ?? 0,
-		pwm_left:		robot.lastPwmLeft,
-		pwm_right:		robot.lastPwmRight,
+		F:				tm.force,
+		pwm:			tm.pwm,
+		pwm_nn:			tm.pwm_nn,
+		pwm_residual:	tm.pwm - tm.pwm_nn,
+		vel_command:	tm.vel_command,
+		vel_desired:	pilot.nav.vel_desired_last ?? 0,
+		err_x:			pilot.nav.err_last ?? 0,
+		tilt_sp:		command.intent === 'attitude' ? command.tilt : tm.pitch_target,
+		pitch_target:	tm.pitch_target,
+		force_fwd:		tm.force_fwd,
+		torque_yaw:		tm.yaw_torque,
+		pwm_left:		tm.pwm_left,
+		pwm_right:		tm.pwm_right,
 	});
 
 	if (history.length > 5000) history.shift();
