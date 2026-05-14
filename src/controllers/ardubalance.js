@@ -284,8 +284,8 @@ export class ArduBalanceController {
 				let nav_out = this.pid_nav(speed_error, gains, dt);               // allows us to accelerate
 
 				// sum the output
-				//pitch_speed = (bal_out + vel_out + nav_out - ff_out);
-				pitch_speed = (bal_out);
+				pitch_speed = (bal_out + vel_out + nav_out - ff_out);
+				//pitch_speed = (bal_out + vel_out);
 				console.log("bal_out",bal_out ,"vel_out", vel_out ,"nav_out", nav_out ,"ff_out", ff_out);
 				break;
 			}
@@ -359,7 +359,7 @@ export class ArduBalanceController {
 				this.yaw_speed = Kheading * this.yaw_rate_target * 100;
 			}
 		}
-		this.yaw_speed = 0;
+		//this.yaw_speed = 0;
 	}
 
 	// ──────────────────────────────────────────────────────────────────────
