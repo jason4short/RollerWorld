@@ -1,6 +1,6 @@
 import { ArduBalanceController } from '../controllers/ardubalance.js';
-import { Attitude } from '../controllers/stack/attitude.js';
-import { NavMixer } from '../controllers/stack/mixer.js';
+import { Attitude } from '../controllers/stack/Attitude.js';
+import { NavMixer } from '../controllers/stack/Mixer.js';
 
 // Supervised-learning trainer.
 //
